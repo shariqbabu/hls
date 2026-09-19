@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       urls:
-        description: "TS URLs - one URL per line"
+        description: "Paste multiple TS URLs"
         required: true
         type: string
+
       folder:
         description: "Save folder"
         required: false
@@ -21,7 +22,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Download TS files
@@ -30,6 +32,7 @@ jobs:
           FOLDER: ${{ inputs.folder }}
         shell: bash
         run: |
+
           set -uo pipefail
 
           mkdir -p "$FOLDER"
@@ -38,48 +41,54 @@ jobs:
           success=0
           failed=0
 
-          while IFS= read -r raw_url || [ -n "$raw_url" ]; do
+          echo "Extracting URLs..."
 
-            url="$(printf '%s' "$raw_url" | tr -d '\r')"
+          # Extract every http/https URL from the complete input.
+          # Works even if GitHub combines multiple lines into one string.
+          mapfile -t URL_LIST < <(
+            printf '%s' "$URLS" |
+            tr '\r\n\t' '   ' |
+            grep -oE 'https?://[^[:space:]]+'
+          )
+
+          echo "Found ${#URL_LIST[@]} URL(s)"
+
+          for url in "${URL_LIST[@]}"; do
+
+            # Remove accidental surrounding characters
             url="$(printf '%s' "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-
-            # Remove surrounding quotes
             url="${url#\"}"
             url="${url%\"}"
             url="${url#\'}"
             url="${url%\'}"
 
-            # Skip empty lines
             [ -z "$url" ] && continue
 
             total=$((total + 1))
 
             echo ""
-            echo "================================="
+            echo "======================================"
             echo "URL #$total"
             echo "$url"
-            echo "================================="
+            echo "======================================"
 
-            # Validate URL
-            if [[ ! "$url" =~ ^https?://[^[:space:]]+$ ]]; then
-              echo "::error::Invalid URL: $url"
-              failed=$((failed + 1))
-              continue
-            fi
-
-            # Extract filename without query string
+            # Extract filename from URL path
             path="${url%%\?*}"
             filename="$(basename "$path")"
 
-            # If filename is not .ts, generate one
+            # Remove unsafe filename characters
+            filename="$(printf '%s' "$filename" | sed 's/[<>:"\/\\|?*]/_/g')"
+
+            # If filename is not a TS file
             if [ -z "$filename" ] || [[ "$filename" != *.ts ]]; then
               filename="segment_${total}.ts"
             fi
 
             output="$FOLDER/$filename"
 
-            # Avoid duplicate filenames
+            # Avoid duplicate filename
             if [ -f "$output" ]; then
+
               name="${filename%.ts}"
               n=2
 
@@ -88,6 +97,7 @@ jobs:
               done
 
               output="$FOLDER/${name}_${n}.ts"
+
             fi
 
             echo "Saving: $output"
@@ -107,45 +117,62 @@ jobs:
             then
 
               if [ -s "$output" ]; then
+
                 size="$(du -h "$output" | cut -f1)"
+
                 echo "SUCCESS: $output ($size)"
+
                 success=$((success + 1))
+
               else
-                echo "::error::Empty file: $output"
+
+                echo "::error::Downloaded file is empty"
                 rm -f "$output"
+
                 failed=$((failed + 1))
+
               fi
 
             else
-              echo "::error::Download failed: $url"
+
+              echo "::error::Download failed"
               rm -f "$output"
+
               failed=$((failed + 1))
+
             fi
 
-          done <<< "$URLS"
+          done
 
           echo ""
-          echo "================================="
+          echo "======================================"
           echo "DOWNLOAD SUMMARY"
+          echo "======================================"
           echo "Total:   $total"
           echo "Success: $success"
           echo "Failed:  $failed"
-          echo "================================="
+          echo "======================================"
 
           if [ "$success" -eq 0 ]; then
+            echo "::error::No files were downloaded."
             exit 1
           fi
 
       - name: Show downloaded files
         run: |
+
+          echo "Downloaded TS files:"
+
           find "${{ inputs.folder }}" \
             -type f \
             -name "*.ts" \
-            -printf "%p - %s bytes\n" | sort
+            -printf "%p - %s bytes\n" |
+            sort
 
-      - name: Commit and push
+      - name: Commit files
         shell: bash
         run: |
+
           set -e
 
           git config user.name "github-actions[bot]"
