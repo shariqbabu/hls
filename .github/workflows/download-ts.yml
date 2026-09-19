@@ -1,19 +1,14 @@
-import os, zipfile
-
-base = "/mnt/data/github-ts-downloader-fixed"
-os.makedirs(base + "/.github/workflows", exist_ok=True)
-
-workflow = r'''name: Download TS Files
+name: Download TS Files
 
 on:
   workflow_dispatch:
     inputs:
       urls:
-        description: "Paste TS URLs - one URL per line"
+        description: "TS URLs - one URL per line"
         required: true
         type: string
       folder:
-        description: "Folder to save files"
+        description: "Save folder"
         required: false
         default: "downloads"
         type: string
@@ -26,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Download TS files
@@ -39,62 +34,66 @@ jobs:
 
           mkdir -p "$FOLDER"
 
-          count=0
+          total=0
           success=0
           failed=0
 
           while IFS= read -r raw_url || [ -n "$raw_url" ]; do
-            # Remove Windows CR, leading/trailing whitespace and surrounding quotes
-            url="$(printf '%s' "$raw_url" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+
+            url="$(printf '%s' "$raw_url" | tr -d '\r')"
+            url="$(printf '%s' "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+            # Remove surrounding quotes
             url="${url#\"}"
             url="${url%\"}"
             url="${url#\'}"
             url="${url%\'}"
 
-            # Ignore empty lines
+            # Skip empty lines
             [ -z "$url" ] && continue
 
-            count=$((count + 1))
+            total=$((total + 1))
 
             echo ""
-            echo "========================================"
-            echo "File #$count"
-            echo "URL: $url"
-            echo "========================================"
+            echo "================================="
+            echo "URL #$total"
+            echo "$url"
+            echo "================================="
 
-            # Validate URL before calling curl
+            # Validate URL
             if [[ ! "$url" =~ ^https?://[^[:space:]]+$ ]]; then
-              echo "::error::Invalid URL skipped: $url"
+              echo "::error::Invalid URL: $url"
               failed=$((failed + 1))
               continue
             fi
 
-            # Get filename from URL path, ignoring query string
+            # Extract filename without query string
             path="${url%%\?*}"
             filename="$(basename "$path")"
 
-            # Remove characters that cannot safely be used in a filename
-            filename="$(printf '%s' "$filename" | sed 's/[<>:"\/\\|?*]/_/g')"
-
-            # If URL has no usable .ts filename, generate one
-            if [ -z "$filename" ] || [ "$filename" = "." ] || [ "$filename" = "/" ] || [[ "$filename" != *.ts ]]; then
-              filename="segment_${count}.ts"
+            # If filename is not .ts, generate one
+            if [ -z "$filename" ] || [[ "$filename" != *.ts ]]; then
+              filename="segment_${total}.ts"
             fi
 
-            # Avoid overwriting a file downloaded earlier in the same run
             output="$FOLDER/$filename"
-            if [ -e "$output" ]; then
-              stem="${filename%.ts}"
+
+            # Avoid duplicate filenames
+            if [ -f "$output" ]; then
+              name="${filename%.ts}"
               n=2
-              while [ -e "$FOLDER/${stem}_${n}.ts" ]; do
+
+              while [ -f "$FOLDER/${name}_${n}.ts" ]; do
                 n=$((n + 1))
               done
-              output="$FOLDER/${stem}_${n}.ts"
+
+              output="$FOLDER/${name}_${n}.ts"
             fi
 
             echo "Saving: $output"
 
-            if curl -L \
+            if curl \
+              -L \
               --fail \
               --silent \
               --show-error \
@@ -104,17 +103,19 @@ jobs:
               --max-time 600 \
               -A "Mozilla/5.0" \
               "$url" \
-              -o "$output"; then
+              -o "$output"
+            then
 
               if [ -s "$output" ]; then
                 size="$(du -h "$output" | cut -f1)"
                 echo "SUCCESS: $output ($size)"
                 success=$((success + 1))
               else
-                echo "::error::Downloaded file is empty: $output"
+                echo "::error::Empty file: $output"
                 rm -f "$output"
                 failed=$((failed + 1))
               fi
+
             else
               echo "::error::Download failed: $url"
               rm -f "$output"
@@ -124,22 +125,23 @@ jobs:
           done <<< "$URLS"
 
           echo ""
-          echo "========================================"
+          echo "================================="
           echo "DOWNLOAD SUMMARY"
-          echo "Total:   $count"
+          echo "Total:   $total"
           echo "Success: $success"
           echo "Failed:  $failed"
-          echo "========================================"
+          echo "================================="
 
           if [ "$success" -eq 0 ]; then
-            echo "::error::No files were downloaded."
             exit 1
           fi
 
       - name: Show downloaded files
         run: |
-          echo "Files in ${{ inputs.folder }}:"
-          find "${{ inputs.folder }}" -type f -name "*.ts" -printf '%p - %s bytes\n' | sort
+          find "${{ inputs.folder }}" \
+            -type f \
+            -name "*.ts" \
+            -printf "%p - %s bytes\n" | sort
 
       - name: Commit and push
         shell: bash
@@ -158,44 +160,3 @@ jobs:
 
           git commit -m "Download TS files"
           git push
-'''
-
-readme = r'''# Multiple TS URL Downloader
-
-GitHub Actions workflow for downloading multiple authorized `.ts` files and committing them into the repository.
-
-## Input
-
-Go to:
-
-Actions → Download TS Files → Run workflow
-
-Paste one URL per line:
-
-https://example.com/segment0.ts
-https://example.com/segment1.ts
-https://example.com/segment2.ts
-
-The default destination is:
-
-downloads/
-
-The workflow cleans Windows line endings and whitespace, validates URLs, generates a filename when needed, avoids filename collisions, and commits successful downloads.
-
-Only use URLs for files you are authorized to download and store.
-'''
-
-with open(base + "/.github/workflows/download-ts.yml", "w", encoding="utf-8") as f:
-    f.write(workflow)
-
-with open(base + "/README.md", "w", encoding="utf-8") as f:
-    f.write(readme)
-
-zip_path = "/mnt/data/github-ts-downloader-fixed.zip"
-with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-    for root, _, files in os.walk(base):
-        for name in files:
-            path = os.path.join(root, name)
-            z.write(path, os.path.relpath(path, base))
-
-print(zip_path)
