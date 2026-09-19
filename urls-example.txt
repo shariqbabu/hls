@@ -1,0 +1,3 @@
+https://example.com/segment_001.ts
+https://example.com/segment_002.ts
+https://example.com/segment_003.ts
