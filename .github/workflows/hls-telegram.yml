@@ -19,11 +19,6 @@ on:
         default: "6"
         type: string
 
-# Prevent multiple workflow runs from using the same Telegram session concurrently
-concurrency:
-  group: telegram-hls-upload
-  cancel-in-progress: false
-
 jobs:
   process:
     runs-on: ubuntu-latest
@@ -32,11 +27,12 @@ jobs:
     env:
       TG_API_ID: ${{ secrets.TG_API_ID }}
       TG_API_HASH: ${{ secrets.TG_API_HASH }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_SESSION: ${{ secrets.TG_SESSION }}
       TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
       WORKER_URL: ${{ secrets.WORKER_URL }}
 
-      TG_UPLOAD_CONCURRENCY: "3"
+      TG_UPLOAD_CONCURRENCY: "4"
       TG_UPLOAD_TIMEOUT: "900"
 
     steps:
@@ -93,12 +89,17 @@ jobs:
         run: |
           set -euo pipefail
           echo "Checking Telegram configuration secrets..."
-          for var in TG_API_ID TG_API_HASH TG_SESSION TG_CHANNEL WORKER_URL; do
+          for var in TG_API_ID TG_API_HASH TG_CHANNEL WORKER_URL; do
             if [ -z "${!var}" ]; then
               echo "❌ Secret $var is missing!"
               exit 1
             fi
           done
+
+          if [ -z "${TG_BOT_TOKEN:-}" ] && [ -z "${TG_SESSION:-}" ]; then
+            echo "❌ Either 'TG_BOT_TOKEN' or 'TG_SESSION' secret must be set!"
+            exit 1
+          fi
           echo "✅ All Telegram secrets found."
 
       - name: Test Video URL

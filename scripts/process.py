@@ -2,10 +2,10 @@
 """
 ⚡ Fast & Resilient Telegram HLS Uploader & Zero-Buffer M3U8 Generator
 Features:
-- Dedicated AuthKeyDuplicatedError / AuthKeyUnregisteredError instant exit (no useless retries)
-- Auto-reconnect on transient network / socket disconnects
-- Continuous Async Worker Queue with clean cancellation
-- Real-time Speed Tracker (MB/s & percentage)
+- Robust TG_SESSION sanitizer (auto-fixes whitespace, quotes, and base64 padding)
+- Immediate exit on revoked session (no useless retries)
+- Auto-reconnect on transient network drops
+- Continuous Async Worker Queue with live speed tracking
 - Auto-resume from existing mapping.json
 """
 
@@ -15,6 +15,8 @@ import json
 import asyncio
 import time
 import re
+import base64
+import binascii
 from pathlib import Path
 from telethon import TelegramClient, errors
 from telethon.sessions import StringSession
@@ -27,6 +29,29 @@ def get_env_var(name: str, default: str = None, required: bool = False) -> str:
         print(f"❌ Error: Environment variable '{name}' is required but not set.")
         sys.exit(1)
     return str(val).strip() if val is not None else ""
+
+
+def sanitize_session_string(session_str: str) -> str:
+    """
+    Cleans up session string from quotes, whitespaces, newlines,
+    and repairs base64 padding if missed during copy-paste.
+    """
+    if not session_str:
+        return ""
+    # Strip whitespace, quotes, newlines
+    s = session_str.strip().strip("'\"").strip()
+    # Remove internal linebreaks or spaces from copy-paste
+    s = "".join(s.split())
+
+    # Fix base64 padding for Telethon StringSession (version byte + base64 payload)
+    if len(s) > 1 and s[0] == "1":
+        payload = s[1:]
+        missing_padding = len(payload) % 4
+        if missing_padding:
+            payload += "=" * (4 - missing_padding)
+        return "1" + payload
+
+    return s
 
 
 def parse_channel_identifier(channel_str: str):
@@ -107,9 +132,16 @@ def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, s
 async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     tg_api_id = get_env_var("TG_API_ID", required=True)
     tg_api_hash = get_env_var("TG_API_HASH", required=True)
-    tg_session = get_env_var("TG_SESSION", required=True)
+    raw_session = get_env_var("TG_SESSION", default="")
+    tg_bot_token = get_env_var("TG_BOT_TOKEN", default="")
     tg_channel = get_env_var("TG_CHANNEL", required=True)
     worker_url = get_env_var("WORKER_URL", required=True)
+
+    tg_session = sanitize_session_string(raw_session)
+
+    if not tg_bot_token and not tg_session:
+        print("❌ Error: 'TG_SESSION' secret is missing or empty.")
+        sys.exit(1)
 
     concurrency = int(get_env_var("TG_UPLOAD_CONCURRENCY", default="4"))
     upload_timeout = int(get_env_var("TG_UPLOAD_TIMEOUT", default="900"))
@@ -128,15 +160,26 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     total_size_mb = total_bytes / (1024 * 1024)
 
     print("=" * 60)
-    print(f"⚡ FAST & RESILIENT TELEGRAM HLS PIPELINE")
+    print("⚡ FAST & RESILIENT TELEGRAM HLS PIPELINE")
     print(f"📁 Total Chunks : {total_segments} ({total_size_mb:.2f} MB)")
     print(f"🚀 Concurrency  : {concurrency} Parallel Streams")
     print(f"🎯 Target       : {tg_channel}")
     print("=" * 60)
 
     channel_target = parse_channel_identifier(tg_channel)
+
+    # Initialize Telethon Client with StringSession validation
+    try:
+        session_obj = StringSession(tg_session) if tg_session else StringSession()
+    except Exception as e:
+        print(f"\n❌ Error initializing TG_SESSION: {e}")
+        print("👉 The TG_SESSION secret is incomplete or corrupted.")
+        print(f"   String length: {len(raw_session)} chars.")
+        print("   Make sure you copied the ENTIRE session string from Google Colab without missing characters.\n")
+        sys.exit(1)
+
     client = TelegramClient(
-        StringSession(tg_session),
+        session_obj,
         int(tg_api_id),
         tg_api_hash,
         flood_sleep_threshold=120,
@@ -145,23 +188,26 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     )
 
     try:
-        await client.connect()
+        if tg_bot_token:
+            await client.start(bot_token=tg_bot_token)
+        else:
+            await client.connect()
+            if not await client.is_user_authorized():
+                print("❌ Error: Telegram StringSession is not authorized! Please generate a new TG_SESSION.")
+                sys.exit(1)
     except (errors.AuthKeyDuplicatedError, errors.AuthKeyUnregisteredError) as e:
         print("\n❌ CRITICAL AUTH ERROR: Session invalidated by Telegram.")
         print("This TG_SESSION was used simultaneously from another IP/device.")
-        print("👉 Run generate_session.py to create a new session string and update GitHub secrets.\n")
+        print("👉 Generate a fresh TG_SESSION in Google Colab, disconnect Colab runtime, and update GitHub secret.\n")
         sys.exit(1)
     except Exception as e:
         print(f"❌ Failed to connect to Telegram: {e}")
         sys.exit(1)
 
     try:
-        if not await client.is_user_authorized():
-            print("❌ Error: Telegram session is not authorized! Please generate a new TG_SESSION.")
-            sys.exit(1)
-
         me = await client.get_me()
-        print(f"✅ Connected as: {me.first_name} (ID: {me.id})")
+        user_type = "Bot" if getattr(me, "bot", False) else "User"
+        print(f"✅ Connected as {user_type}: {me.first_name} (@{me.username or 'NoUsername'}) [ID: {me.id}]")
 
         try:
             entity = await client.get_input_entity(channel_target)
@@ -212,7 +258,6 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
                         return
 
                     try:
-                        # Ensure client is connected before sending
                         if not client.is_connected():
                             await client.connect()
 
@@ -251,8 +296,7 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
                         break
 
                     except (errors.AuthKeyDuplicatedError, errors.AuthKeyUnregisteredError) as e:
-                        print(f"\n❌ [Worker {worker_id}] CRITICAL AUTH ERROR: Telegram session revoked during upload ({fname}).")
-                        print("👉 Ensure no other instance is using this session, and generate a new TG_SESSION string.\n")
+                        print(f"\n❌ [Worker {worker_id}] CRITICAL AUTH ERROR: Session revoked.")
                         fatal_error_event.set()
                         queue.task_done()
                         raise RuntimeError("Invalid Telegram session key") from e
