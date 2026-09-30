@@ -134,120 +134,139 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     total_segments = len(segments)
     total_size_mb = sum(s.stat().st_size for s in segments) / (1024 * 1024)
     print(f"📁 Found {total_segments} HLS segments ({total_size_mb:.2f} MB) in {hls_dir}")
-    print(f"🚀 Starting MTProto upload (Concurrency: {concurrency}, Target Channel: {tg_channel})...")
+    print(f"🚀 Initializing MTProto Client (Target Channel: {tg_channel}, Concurrency: {concurrency})...")
 
     # Initialize Telethon Client
     channel_target = parse_channel_identifier(tg_channel)
     client = TelegramClient(StringSession(tg_session), int(tg_api_id), tg_api_hash)
 
-    await client.connect()
-    if not await client.is_user_authorized():
-        print("❌ Error: Telegram session is not authorized! Check TG_SESSION secret.")
+    try:
+        await client.connect()
+    except errors.AuthKeyDuplicatedError:
+        print("❌ CRITICAL AUTH ERROR: AuthKeyDuplicatedError")
+        print("This TG_SESSION was used simultaneously from another IP/device or workflow run.")
+        print("Telegram has invalidated this session key for security.")
+        print("👉 Solution: Generate a fresh TG_SESSION string and update your GitHub repository secrets.")
         sys.exit(1)
-
-    me = await client.get_me()
-    print(f"✅ Connected as: {me.first_name} (ID: {me.id})")
+    except errors.AuthKeyUnregisteredError:
+        print("❌ CRITICAL AUTH ERROR: AuthKeyUnregisteredError")
+        print("The TG_SESSION string is invalid or expired.")
+        print("👉 Solution: Generate a fresh TG_SESSION string and update your GitHub repository secrets.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Failed to connect to Telegram: {e}")
+        sys.exit(1)
 
     try:
-        entity = await client.get_input_entity(channel_target)
-    except Exception as e:
-        print(f"❌ Error finding channel '{tg_channel}': {e}")
-        sys.exit(1)
+        if not await client.is_user_authorized():
+            print("❌ Error: Telegram session is not authorized! Please generate a new TG_SESSION.")
+            sys.exit(1)
 
-    # Resume capability if mapping.json already exists
-    mapping_file = hls_dir / "mapping.json"
-    mapping = {}
-    if mapping_file.exists():
+        me = await client.get_me()
+        print(f"✅ Connected as: {me.first_name} (ID: {me.id})")
+
         try:
-            with open(mapping_file, "r", encoding="utf-8") as f:
-                mapping = json.load(f)
-            print(f"🔄 Found existing mapping for {len(mapping)} segments.")
-        except Exception:
-            mapping = {}
+            entity = await client.get_input_entity(channel_target)
+        except Exception as e:
+            print(f"❌ Error finding channel '{tg_channel}': {e}")
+            sys.exit(1)
 
-    pending_segments = [s for s in segments if s.name not in mapping]
-    print(f"📦 Segments to upload: {len(pending_segments)} / {total_segments}")
-
-    semaphore = asyncio.Semaphore(concurrency)
-    completed_count = len(mapping)
-    lock = asyncio.Lock()
-
-    async def upload_single(seg_path: Path):
-        nonlocal completed_count
-        fname = seg_path.name
-        caption_text = f"{movie_name} - {fname}" if movie_name else fname
-
-        for attempt in range(1, 4):
+        # Resume capability if mapping.json already exists
+        mapping_file = hls_dir / "mapping.json"
+        mapping = {}
+        if mapping_file.exists():
             try:
-                async with semaphore:
-                    msg = await asyncio.wait_for(
-                        client.send_file(
-                            entity,
-                            file=str(seg_path),
-                            caption=caption_text,
-                            force_document=True
-                        ),
-                        timeout=upload_timeout
-                    )
-                    async with lock:
-                        mapping[fname] = {
-                            "filename": fname,
-                            "message_id": msg.id,
-                            "size_bytes": seg_path.stat().st_size
-                        }
-                        completed_count += 1
-                        pct = (completed_count / total_segments) * 100
-                        print(f"⚡ [{completed_count}/{total_segments}] ({pct:.1f}%) Uploaded {fname} ➔ Msg ID: {msg.id}")
-                    return
-            except errors.FloodWaitError as e:
-                print(f"⏳ FloodWait: Sleeping for {e.seconds} seconds on {fname}...")
-                await asyncio.sleep(e.seconds + 1)
-            except Exception as e:
-                print(f"⚠️ Attempt {attempt}/3 failed for {fname}: {e}")
-                if attempt < 3:
-                    await asyncio.sleep(2 * attempt)
-                else:
-                    print(f"❌ Failed to upload {fname} after 3 attempts.")
-                    raise
+                with open(mapping_file, "r", encoding="utf-8") as f:
+                    mapping = json.load(f)
+                print(f"🔄 Found existing mapping for {len(mapping)} segments.")
+            except Exception:
+                mapping = {}
 
-    # Batch gather to prevent overwhelming task queues
-    batch_size = 10
-    tasks = [upload_single(s) for s in pending_segments]
-    for i in range(0, len(tasks), batch_size):
-        batch = tasks[i:i + batch_size]
-        await asyncio.gather(*batch)
+        pending_segments = [s for s in segments if s.name not in mapping]
+        print(f"📦 Segments to upload: {len(pending_segments)} / {total_segments}")
 
-    print("\n🎉 All segments uploaded successfully!")
+        semaphore = asyncio.Semaphore(concurrency)
+        completed_count = len(mapping)
+        lock = asyncio.Lock()
 
-    # Parse local.m3u8 for accurate EXTINF durations
-    local_m3u8_file = hls_dir / "local.m3u8"
-    target_dur, segment_durs = parse_local_m3u8(local_m3u8_file)
+        async def upload_single(seg_path: Path):
+            nonlocal completed_count
+            fname = seg_path.name
+            caption_text = f"{movie_name} - {fname}" if movie_name else fname
 
-    # Save mapping.json and segment_mapping.json
-    with open(mapping_file, "w", encoding="utf-8") as f:
-        json.dump(mapping, f, indent=2)
+            for attempt in range(1, 4):
+                try:
+                    async with semaphore:
+                        msg = await asyncio.wait_for(
+                            client.send_file(
+                                entity,
+                                file=str(seg_path),
+                                caption=caption_text,
+                                force_document=True
+                            ),
+                            timeout=upload_timeout
+                        )
+                        async with lock:
+                            mapping[fname] = {
+                                "filename": fname,
+                                "message_id": msg.id,
+                                "size_bytes": seg_path.stat().st_size
+                            }
+                            completed_count += 1
+                            pct = (completed_count / total_segments) * 100
+                            print(f"⚡ [{completed_count}/{total_segments}] ({pct:.1f}%) Uploaded {fname} ➔ Msg ID: {msg.id}")
+                        return
+                except errors.FloodWaitError as e:
+                    print(f"⏳ FloodWait: Sleeping for {e.seconds} seconds on {fname}...")
+                    await asyncio.sleep(e.seconds + 1)
+                except Exception as e:
+                    print(f"⚠️ Attempt {attempt}/3 failed for {fname}: {e}")
+                    if attempt < 3:
+                        await asyncio.sleep(2 * attempt)
+                    else:
+                        print(f"❌ Failed to upload {fname} after 3 attempts.")
+                        raise
 
-    with open(hls_dir / "segment_mapping.json", "w", encoding="utf-8") as f:
-        json.dump(mapping, f, indent=2)
+        # Batch execution
+        batch_size = 10
+        tasks = [upload_single(s) for s in pending_segments]
+        for i in range(0, len(tasks), batch_size):
+            batch = tasks[i:i + batch_size]
+            await asyncio.gather(*batch)
 
-    # Generate and save index.m3u8
-    m3u8_content = build_streaming_m3u8(
-        mapping=mapping,
-        worker_url=worker_url,
-        target_duration=target_dur,
-        segment_durations=segment_durs,
-        prefetch_count=5
-    )
+        print("\n🎉 All segments uploaded successfully!")
 
-    index_m3u8_file = hls_dir / "index.m3u8"
-    index_m3u8_file.write_text(m3u8_content, encoding="utf-8")
-    (hls_dir / "index_worker.m3u8").write_text(m3u8_content, encoding="utf-8")
+        # Parse local.m3u8 for accurate EXTINF durations
+        local_m3u8_file = hls_dir / "local.m3u8"
+        target_dur, segment_durs = parse_local_m3u8(local_m3u8_file)
 
-    print("📄 Generated Outputs:")
-    print(f" - {index_m3u8_file.resolve()}")
-    print(f" - {mapping_file.resolve()}")
+        # Save mapping.json and segment_mapping.json
+        with open(mapping_file, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, indent=2)
 
-    await client.disconnect()
+        with open(hls_dir / "segment_mapping.json", "w", encoding="utf-8") as f:
+            json.dump(mapping, f, indent=2)
+
+        # Generate and save index.m3u8
+        m3u8_content = build_streaming_m3u8(
+            mapping=mapping,
+            worker_url=worker_url,
+            target_duration=target_dur,
+            segment_durations=segment_durs,
+            prefetch_count=5
+        )
+
+        index_m3u8_file = hls_dir / "index.m3u8"
+        index_m3u8_file.write_text(m3u8_content, encoding="utf-8")
+        (hls_dir / "index_worker.m3u8").write_text(m3u8_content, encoding="utf-8")
+
+        print("📄 Generated Outputs:")
+        print(f" - {index_m3u8_file.resolve()}")
+        print(f" - {mapping_file.resolve()}")
+
+    finally:
+        if client.is_connected():
+            await client.disconnect()
 
 
 def main():

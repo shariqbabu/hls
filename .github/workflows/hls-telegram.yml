@@ -19,6 +19,11 @@ on:
         default: "6"
         type: string
 
+# Prevent multiple workflow runs from using the same Telegram session concurrently
+concurrency:
+  group: telegram-hls-upload
+  cancel-in-progress: false
+
 jobs:
   process:
     runs-on: ubuntu-latest
