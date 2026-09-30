@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """
-Telegram HLS Upload & Zero-Buffer M3U8 Generator
-Uploads HLS segments to a Telegram Channel via Telethon MTProto and generates:
-- index.m3u8 (with Worker URL streaming & prefetch optimization)
-- mapping.json (filename -> Telegram message_id mapping)
+⚡ Fast Telegram HLS Uploader & Zero-Buffer M3U8 Generator
+Optimized for high-speed multi-worker parallel upload:
+- Continuous Async Queue (Zero idle worker wait)
+- Direct MIME and Document Attributes (Zero file-probe overhead)
+- Real-time Speed Tracker (MB/s & percentage)
+- Auto-resume from existing mapping
 """
 
 import os
 import sys
 import json
 import asyncio
+import time
 import re
 from pathlib import Path
 from telethon import TelegramClient, errors
 from telethon.sessions import StringSession
+from telethon.tl.types import DocumentAttributeFilename
 
 
 def get_env_var(name: str, default: str = None, required: bool = False) -> str:
@@ -25,9 +29,6 @@ def get_env_var(name: str, default: str = None, required: bool = False) -> str:
 
 
 def parse_channel_identifier(channel_str: str):
-    """
-    Handles @username, public links, or numeric channel IDs (-100...).
-    """
     channel_str = channel_str.strip()
     if channel_str.startswith("https://t.me/"):
         channel_str = "@" + channel_str.replace("https://t.me/", "").rstrip("/")
@@ -39,10 +40,6 @@ def parse_channel_identifier(channel_str: str):
 
 
 def parse_local_m3u8(m3u8_path: Path):
-    """
-    Parses local.m3u8 to extract exact segment durations and target duration.
-    Returns: (target_duration, dict(segment_name -> duration_str))
-    """
     target_duration = 7
     segment_durations = {}
 
@@ -71,9 +68,6 @@ def parse_local_m3u8(m3u8_path: Path):
 
 
 def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, segment_durations: dict, prefetch_count: int = 5) -> str:
-    """
-    Generates zero-buffer M3U8 with prefetch parameters (next, next2, next3...).
-    """
     worker_base = worker_url.strip().rstrip("/")
     if not worker_base.endswith("/api/tg/stream"):
         if worker_base.endswith("/api/tg"):
@@ -95,7 +89,6 @@ def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, s
         fname = sorted_fnames[n]
         dur = segment_durations.get(fname, "6.000000")
 
-        # Build URL with prefetch parameters
         params = [f"msg={msg_ids[n]}"]
         for offset in range(1, prefetch_count + 1):
             if n + offset < len(msg_ids):
@@ -111,17 +104,16 @@ def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, s
 
 
 async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
-    # Load configuration
     tg_api_id = get_env_var("TG_API_ID", required=True)
     tg_api_hash = get_env_var("TG_API_HASH", required=True)
     tg_session = get_env_var("TG_SESSION", required=True)
     tg_channel = get_env_var("TG_CHANNEL", required=True)
     worker_url = get_env_var("WORKER_URL", required=True)
 
-    concurrency = int(get_env_var("TG_UPLOAD_CONCURRENCY", default="5"))
-    upload_timeout = int(get_env_var("TG_UPLOAD_TIMEOUT", default="900"))
+    # Increased default concurrency for faster uploads
+    concurrency = int(get_env_var("TG_UPLOAD_CONCURRENCY", default="12"))
+    upload_timeout = int(get_env_var("TG_UPLOAD_TIMEOUT", default="300"))
 
-    # Discover segment files
     segments = sorted(
         [f for f in hls_dir.glob("segment_*.ts") if f.is_file()],
         key=lambda x: x.name
@@ -132,26 +124,36 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
         sys.exit(1)
 
     total_segments = len(segments)
-    total_size_mb = sum(s.stat().st_size for s in segments) / (1024 * 1024)
-    print(f"📁 Found {total_segments} HLS segments ({total_size_mb:.2f} MB) in {hls_dir}")
-    print(f"🚀 Initializing MTProto Client (Target Channel: {tg_channel}, Concurrency: {concurrency})...")
+    total_bytes = sum(s.stat().st_size for s in segments)
+    total_size_mb = total_bytes / (1024 * 1024)
 
-    # Initialize Telethon Client
+    print("=" * 60)
+    print(f"⚡ FAST TELEGRAM HLS PIPELINE")
+    print(f"📁 Total Chunks : {total_segments} ({total_size_mb:.2f} MB)")
+    print(f"🚀 Workers      : {concurrency} Parallel Streams")
+    print(f"🎯 Target       : {tg_channel}")
+    print("=" * 60)
+
+    # Initialize Telethon Client with optimized connection settings
     channel_target = parse_channel_identifier(tg_channel)
-    client = TelegramClient(StringSession(tg_session), int(tg_api_id), tg_api_hash)
+    client = TelegramClient(
+        StringSession(tg_session),
+        int(tg_api_id),
+        tg_api_hash,
+        flood_sleep_threshold=120,
+        request_retries=10,
+        connection_retries=10
+    )
 
     try:
         await client.connect()
     except errors.AuthKeyDuplicatedError:
         print("❌ CRITICAL AUTH ERROR: AuthKeyDuplicatedError")
-        print("This TG_SESSION was used simultaneously from another IP/device or workflow run.")
-        print("Telegram has invalidated this session key for security.")
-        print("👉 Solution: Generate a fresh TG_SESSION string and update your GitHub repository secrets.")
+        print("This TG_SESSION was used simultaneously from another IP/device.")
+        print("👉 Solution: Run generate_session.py to create a new session string.")
         sys.exit(1)
     except errors.AuthKeyUnregisteredError:
-        print("❌ CRITICAL AUTH ERROR: AuthKeyUnregisteredError")
-        print("The TG_SESSION string is invalid or expired.")
-        print("👉 Solution: Generate a fresh TG_SESSION string and update your GitHub repository secrets.")
+        print("❌ CRITICAL AUTH ERROR: AuthKeyUnregisteredError (Session expired).")
         sys.exit(1)
     except Exception as e:
         print(f"❌ Failed to connect to Telegram: {e}")
@@ -171,72 +173,105 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
             print(f"❌ Error finding channel '{tg_channel}': {e}")
             sys.exit(1)
 
-        # Resume capability if mapping.json already exists
+        # Load existing mapping for resume support
         mapping_file = hls_dir / "mapping.json"
         mapping = {}
         if mapping_file.exists():
             try:
                 with open(mapping_file, "r", encoding="utf-8") as f:
                     mapping = json.load(f)
-                print(f"🔄 Found existing mapping for {len(mapping)} segments.")
+                print(f"🔄 Resuming: {len(mapping)} / {total_segments} already uploaded.")
             except Exception:
                 mapping = {}
 
         pending_segments = [s for s in segments if s.name not in mapping]
-        print(f"📦 Segments to upload: {len(pending_segments)} / {total_segments}")
+        pending_bytes = sum(s.stat().st_size for s in pending_segments)
+        print(f"📦 Remaining to upload: {len(pending_segments)} chunks ({(pending_bytes / (1024 * 1024)):.2f} MB)\n")
 
-        semaphore = asyncio.Semaphore(concurrency)
+        # Setup continuous task queue
+        queue = asyncio.Queue()
+        for seg in pending_segments:
+            queue.put_nowait(seg)
+
         completed_count = len(mapping)
+        uploaded_bytes = total_bytes - pending_bytes
+        start_time = time.time()
         lock = asyncio.Lock()
 
-        async def upload_single(seg_path: Path):
-            nonlocal completed_count
-            fname = seg_path.name
-            caption_text = f"{movie_name} - {fname}" if movie_name else fname
-
-            for attempt in range(1, 4):
+        async def worker(worker_id: int):
+            nonlocal completed_count, uploaded_bytes
+            while not queue.empty():
                 try:
-                    async with semaphore:
+                    seg_path: Path = await queue.get()
+                except asyncio.QueueEmpty:
+                    break
+
+                fname = seg_path.name
+                fsize = seg_path.stat().st_size
+                fsize_mb = fsize / (1024 * 1024)
+                caption_text = f"{movie_name} - {fname}" if movie_name else fname
+
+                for attempt in range(1, 4):
+                    try:
+                        # Direct upload with explicit metadata to skip probing delays
                         msg = await asyncio.wait_for(
                             client.send_file(
                                 entity,
                                 file=str(seg_path),
                                 caption=caption_text,
-                                force_document=True
+                                force_document=True,
+                                attributes=[DocumentAttributeFilename(fname)],
+                                mime_type="video/mp2t"
                             ),
                             timeout=upload_timeout
                         )
+
                         async with lock:
                             mapping[fname] = {
                                 "filename": fname,
                                 "message_id": msg.id,
-                                "size_bytes": seg_path.stat().st_size
+                                "size_bytes": fsize
                             }
                             completed_count += 1
+                            uploaded_bytes += fsize
+
+                            elapsed = max(time.time() - start_time, 0.1)
+                            speed_mb = (uploaded_bytes - (total_bytes - pending_bytes)) / (1024 * 1024) / elapsed
                             pct = (completed_count / total_segments) * 100
-                            print(f"⚡ [{completed_count}/{total_segments}] ({pct:.1f}%) Uploaded {fname} ➔ Msg ID: {msg.id}")
-                        return
-                except errors.FloodWaitError as e:
-                    print(f"⏳ FloodWait: Sleeping for {e.seconds} seconds on {fname}...")
-                    await asyncio.sleep(e.seconds + 1)
-                except Exception as e:
-                    print(f"⚠️ Attempt {attempt}/3 failed for {fname}: {e}")
-                    if attempt < 3:
-                        await asyncio.sleep(2 * attempt)
-                    else:
-                        print(f"❌ Failed to upload {fname} after 3 attempts.")
-                        raise
 
-        # Batch execution
-        batch_size = 10
-        tasks = [upload_single(s) for s in pending_segments]
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i:i + batch_size]
-            await asyncio.gather(*batch)
+                            print(
+                                f"⚡ [{completed_count:4d}/{total_segments}] ({pct:5.1f}%) "
+                                f"➔ {fname} ({fsize_mb:.2f} MB) | "
+                                f"Speed: {speed_mb:5.1f} MB/s | "
+                                f"Msg ID: {msg.id}"
+                            )
+                        queue.task_done()
+                        break
+                    except errors.FloodWaitError as e:
+                        print(f"⏳ [Worker {worker_id}] FloodWait: Sleeping {e.seconds}s on {fname}...")
+                        await asyncio.sleep(e.seconds + 1)
+                    except Exception as e:
+                        print(f"⚠️ [Worker {worker_id}] Attempt {attempt}/3 on {fname} error: {e}")
+                        if attempt < 3:
+                            await asyncio.sleep(1.5 * attempt)
+                        else:
+                            queue.task_done()
+                            print(f"❌ Failed to upload {fname} after 3 attempts.")
+                            raise
 
-        print("\n🎉 All segments uploaded successfully!")
+        # Spawn concurrent workers
+        num_workers = min(concurrency, len(pending_segments)) if pending_segments else 1
+        worker_tasks = [asyncio.create_task(worker(i + 1)) for i in range(num_workers)]
+        await asyncio.gather(*worker_tasks)
 
-        # Parse local.m3u8 for accurate EXTINF durations
+        total_elapsed = max(time.time() - start_time, 0.1)
+        avg_speed = (pending_bytes / (1024 * 1024)) / total_elapsed if pending_bytes > 0 else 0
+        print("\n" + "=" * 60)
+        print(f"🎉 ALL {total_segments} SEGMENTS UPLOADED!")
+        print(f"⏱️ Time Taken: {total_elapsed:.1f}s | Avg Speed: {avg_speed:.2f} MB/s")
+        print("=" * 60)
+
+        # Parse local.m3u8 for exact EXTINF durations
         local_m3u8_file = hls_dir / "local.m3u8"
         target_dur, segment_durs = parse_local_m3u8(local_m3u8_file)
 
@@ -247,7 +282,7 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
         with open(hls_dir / "segment_mapping.json", "w", encoding="utf-8") as f:
             json.dump(mapping, f, indent=2)
 
-        # Generate and save index.m3u8
+        # Generate zero-buffer index.m3u8
         m3u8_content = build_streaming_m3u8(
             mapping=mapping,
             worker_url=worker_url,
