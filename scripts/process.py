@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-⚡ Fast Telegram HLS Uploader & Zero-Buffer M3U8 Generator
-Optimized for high-speed multi-worker parallel upload:
-- Continuous Async Queue (Zero idle worker wait)
-- Direct MIME and Document Attributes (Zero file-probe overhead)
+⚡ Fast & Resilient Telegram HLS Uploader & Zero-Buffer M3U8 Generator
+Features:
+- Dedicated AuthKeyDuplicatedError / AuthKeyUnregisteredError instant exit (no useless retries)
+- Auto-reconnect on transient network / socket disconnects
+- Continuous Async Worker Queue with clean cancellation
 - Real-time Speed Tracker (MB/s & percentage)
-- Auto-resume from existing mapping
+- Auto-resume from existing mapping.json
 """
 
 import os
@@ -110,9 +111,8 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     tg_channel = get_env_var("TG_CHANNEL", required=True)
     worker_url = get_env_var("WORKER_URL", required=True)
 
-    # Increased default concurrency for faster uploads
-    concurrency = int(get_env_var("TG_UPLOAD_CONCURRENCY", default="12"))
-    upload_timeout = int(get_env_var("TG_UPLOAD_TIMEOUT", default="300"))
+    concurrency = int(get_env_var("TG_UPLOAD_CONCURRENCY", default="4"))
+    upload_timeout = int(get_env_var("TG_UPLOAD_TIMEOUT", default="900"))
 
     segments = sorted(
         [f for f in hls_dir.glob("segment_*.ts") if f.is_file()],
@@ -128,13 +128,12 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     total_size_mb = total_bytes / (1024 * 1024)
 
     print("=" * 60)
-    print(f"⚡ FAST TELEGRAM HLS PIPELINE")
+    print(f"⚡ FAST & RESILIENT TELEGRAM HLS PIPELINE")
     print(f"📁 Total Chunks : {total_segments} ({total_size_mb:.2f} MB)")
-    print(f"🚀 Workers      : {concurrency} Parallel Streams")
+    print(f"🚀 Concurrency  : {concurrency} Parallel Streams")
     print(f"🎯 Target       : {tg_channel}")
     print("=" * 60)
 
-    # Initialize Telethon Client with optimized connection settings
     channel_target = parse_channel_identifier(tg_channel)
     client = TelegramClient(
         StringSession(tg_session),
@@ -147,13 +146,10 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
 
     try:
         await client.connect()
-    except errors.AuthKeyDuplicatedError:
-        print("❌ CRITICAL AUTH ERROR: AuthKeyDuplicatedError")
+    except (errors.AuthKeyDuplicatedError, errors.AuthKeyUnregisteredError) as e:
+        print("\n❌ CRITICAL AUTH ERROR: Session invalidated by Telegram.")
         print("This TG_SESSION was used simultaneously from another IP/device.")
-        print("👉 Solution: Run generate_session.py to create a new session string.")
-        sys.exit(1)
-    except errors.AuthKeyUnregisteredError:
-        print("❌ CRITICAL AUTH ERROR: AuthKeyUnregisteredError (Session expired).")
+        print("👉 Run generate_session.py to create a new session string and update GitHub secrets.\n")
         sys.exit(1)
     except Exception as e:
         print(f"❌ Failed to connect to Telegram: {e}")
@@ -173,14 +169,13 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
             print(f"❌ Error finding channel '{tg_channel}': {e}")
             sys.exit(1)
 
-        # Load existing mapping for resume support
         mapping_file = hls_dir / "mapping.json"
         mapping = {}
         if mapping_file.exists():
             try:
                 with open(mapping_file, "r", encoding="utf-8") as f:
                     mapping = json.load(f)
-                print(f"🔄 Resuming: {len(mapping)} / {total_segments} already uploaded.")
+                print(f"🔄 Resuming: {len(mapping)} / {total_segments} already mapped.")
             except Exception:
                 mapping = {}
 
@@ -188,7 +183,6 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
         pending_bytes = sum(s.stat().st_size for s in pending_segments)
         print(f"📦 Remaining to upload: {len(pending_segments)} chunks ({(pending_bytes / (1024 * 1024)):.2f} MB)\n")
 
-        # Setup continuous task queue
         queue = asyncio.Queue()
         for seg in pending_segments:
             queue.put_nowait(seg)
@@ -197,10 +191,11 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
         uploaded_bytes = total_bytes - pending_bytes
         start_time = time.time()
         lock = asyncio.Lock()
+        fatal_error_event = asyncio.Event()
 
         async def worker(worker_id: int):
             nonlocal completed_count, uploaded_bytes
-            while not queue.empty():
+            while not queue.empty() and not fatal_error_event.is_set():
                 try:
                     seg_path: Path = await queue.get()
                 except asyncio.QueueEmpty:
@@ -212,8 +207,15 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
                 caption_text = f"{movie_name} - {fname}" if movie_name else fname
 
                 for attempt in range(1, 4):
+                    if fatal_error_event.is_set():
+                        queue.task_done()
+                        return
+
                     try:
-                        # Direct upload with explicit metadata to skip probing delays
+                        # Ensure client is connected before sending
+                        if not client.is_connected():
+                            await client.connect()
+
                         msg = await asyncio.wait_for(
                             client.send_file(
                                 entity,
@@ -247,22 +249,51 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
                             )
                         queue.task_done()
                         break
+
+                    except (errors.AuthKeyDuplicatedError, errors.AuthKeyUnregisteredError) as e:
+                        print(f"\n❌ [Worker {worker_id}] CRITICAL AUTH ERROR: Telegram session revoked during upload ({fname}).")
+                        print("👉 Ensure no other instance is using this session, and generate a new TG_SESSION string.\n")
+                        fatal_error_event.set()
+                        queue.task_done()
+                        raise RuntimeError("Invalid Telegram session key") from e
+
+                    except (ConnectionError, errors.DisconnectedError) as e:
+                        print(f"⚠️ [Worker {worker_id}] Connection lost on {fname}: {e}. Reconnecting...")
+                        try:
+                            if client.is_connected():
+                                await client.disconnect()
+                            await client.connect()
+                        except Exception:
+                            pass
+                        if attempt < 3:
+                            await asyncio.sleep(2 * attempt)
+                        else:
+                            queue.task_done()
+                            raise
+
                     except errors.FloodWaitError as e:
                         print(f"⏳ [Worker {worker_id}] FloodWait: Sleeping {e.seconds}s on {fname}...")
                         await asyncio.sleep(e.seconds + 1)
+
                     except Exception as e:
                         print(f"⚠️ [Worker {worker_id}] Attempt {attempt}/3 on {fname} error: {e}")
                         if attempt < 3:
-                            await asyncio.sleep(1.5 * attempt)
+                            await asyncio.sleep(2 * attempt)
                         else:
                             queue.task_done()
                             print(f"❌ Failed to upload {fname} after 3 attempts.")
                             raise
 
-        # Spawn concurrent workers
         num_workers = min(concurrency, len(pending_segments)) if pending_segments else 1
         worker_tasks = [asyncio.create_task(worker(i + 1)) for i in range(num_workers)]
-        await asyncio.gather(*worker_tasks)
+
+        try:
+            await asyncio.gather(*worker_tasks)
+        except Exception as e:
+            for t in worker_tasks:
+                if not t.done():
+                    t.cancel()
+            raise e
 
         total_elapsed = max(time.time() - start_time, 0.1)
         avg_speed = (pending_bytes / (1024 * 1024)) / total_elapsed if pending_bytes > 0 else 0

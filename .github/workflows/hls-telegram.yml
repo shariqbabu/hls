@@ -36,8 +36,8 @@ jobs:
       TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
       WORKER_URL: ${{ secrets.WORKER_URL }}
 
-      TG_UPLOAD_CONCURRENCY: "12"
-      TG_UPLOAD_TIMEOUT: "300"
+      TG_UPLOAD_CONCURRENCY: "3"
+      TG_UPLOAD_TIMEOUT: "900"
 
     steps:
       - name: Checkout Repository
