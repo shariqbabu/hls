@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-⚡ Fast & Ultra-High Speed Telegram HLS Uploader & Zero-Buffer M3U8 Generator
-Features:
-- FastTelethon Multi-Part Parallel Uploader (512KB parts + concurrent MTProto streams)
-- Direct InputFile generation (10x faster than standard send_file)
-- Auto-sanitizes TG_SESSION (replaces bad chars, repairs base64 padding)
-- Immediate exit on revoked session (no useless retries)
-- Auto-reconnect on transient network drops
-- Continuous Async Worker Queue with live speed tracking (MB/s)
-- Auto-resume from existing mapping.json
+⚡ Extreme Speed Telegram HLS Pipeline
+- Multi-Client MTProto Connection Pool (5 dedicated TCP sockets to Telegram DC)
+- Fast Multipart 512KB Parallel Part Uploader
+- Zero single-socket bandwidth throttling
+- Real-time Speed & Progress Tracker (MB/s)
+- Automatic cleanup and error handling
 """
 
 import os
@@ -125,17 +122,14 @@ def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, s
     return "\n".join(playlist) + "\n"
 
 
-async def fast_upload_file(client: TelegramClient, file_path: Path, part_concurrency: int = 4):
-    """
-    High-speed multipart uploader using 512KB chunks and concurrent MTProto requests.
-    """
+async def fast_upload_file(client: TelegramClient, file_path: Path):
     file_size = file_path.stat().st_size
     if file_size == 0:
         raise ValueError(f"File {file_path} is empty")
 
     file_id = random.randint(0, 0x7FFFFFFFFFFFFFFF)
     is_big = file_size > 10 * 1024 * 1024
-    part_size = 512 * 1024  # Maximum MTProto part size (512 KB)
+    part_size = 512 * 1024  # 512 KB
     part_count = (file_size + part_size - 1) // part_size
 
     with open(file_path, "rb") as f:
@@ -148,23 +142,20 @@ async def fast_upload_file(client: TelegramClient, file_path: Path, part_concurr
         end = min(start + part_size, file_size)
         parts.append((i, file_bytes[start:end]))
 
-    sem = asyncio.Semaphore(part_concurrency)
-
     async def upload_part(idx: int, data: bytes):
-        async with sem:
-            if is_big:
-                await client(SaveBigFilePartRequest(
-                    file_id=file_id,
-                    file_part=idx,
-                    file_total_parts=part_count,
-                    bytes=data
-                ))
-            else:
-                await client(SaveFilePartRequest(
-                    file_id=file_id,
-                    file_part=idx,
-                    bytes=data
-                ))
+        if is_big:
+            await client(SaveBigFilePartRequest(
+                file_id=file_id,
+                file_part=idx,
+                file_total_parts=part_count,
+                bytes=data
+            ))
+        else:
+            await client(SaveFilePartRequest(
+                file_id=file_id,
+                file_part=idx,
+                bytes=data
+            ))
 
     await asyncio.gather(*(upload_part(idx, data) for idx, data in parts))
 
@@ -185,11 +176,12 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     tg_session = sanitize_session_string(raw_session)
 
     if not tg_bot_token and not tg_session:
-        print("❌ Error: 'TG_SESSION' secret is missing or empty.")
+        print("❌ Error: 'TG_SESSION' secret is missing.")
         sys.exit(1)
 
-    # 6 parallel segment workers + 4 concurrent parts per file = max throughput
-    concurrency = int(get_env_var("TG_UPLOAD_CONCURRENCY", default="6"))
+    # Number of parallel TCP socket connections
+    num_clients = 5
+    concurrency = int(get_env_var("TG_UPLOAD_CONCURRENCY", default="8"))
     upload_timeout = int(get_env_var("TG_UPLOAD_TIMEOUT", default="900"))
 
     segments = sorted(
@@ -206,56 +198,50 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     total_size_mb = total_bytes / (1024 * 1024)
 
     print("=" * 60)
-    print("⚡ FAST MULTIPART TELEGRAM HLS PIPELINE (512KB MTProto Chunks)")
+    print("⚡ MULTI-SOCKET HIGH-SPEED TELEGRAM HLS PIPELINE")
     print(f"📁 Total Chunks : {total_segments} ({total_size_mb:.2f} MB)")
+    print(f"🔌 TCP Sockets  : {num_clients} Dedicated MTProto Connections")
     print(f"🚀 Workers      : {concurrency} Parallel File Streams")
     print(f"🎯 Target       : {tg_channel}")
     print("=" * 60)
 
     channel_target = parse_channel_identifier(tg_channel)
 
-    try:
-        session_obj = StringSession(tg_session) if tg_session else StringSession()
-    except Exception as e:
-        print(f"\n❌ Error initializing TG_SESSION: {e}")
-        print("👉 The TG_SESSION secret is incomplete or corrupted.")
-        sys.exit(1)
-
-    client = TelegramClient(
-        session_obj,
-        int(tg_api_id),
-        tg_api_hash,
-        flood_sleep_threshold=120,
-        request_retries=10,
-        connection_retries=10
-    )
+    # Create Multi-Client TCP Socket Pool
+    print(f"🔌 Opening {num_clients} independent MTProto connections to Telegram...")
+    clients = [
+        TelegramClient(
+            StringSession(tg_session) if tg_session else StringSession(),
+            int(tg_api_id),
+            tg_api_hash,
+            flood_sleep_threshold=120,
+            request_retries=10,
+            connection_retries=10
+        )
+        for _ in range(num_clients)
+    ]
 
     try:
         if tg_bot_token:
-            await client.start(bot_token=tg_bot_token)
+            await asyncio.gather(*(c.start(bot_token=tg_bot_token) for c in clients))
         else:
-            await client.connect()
-            if not await client.is_user_authorized():
-                print("❌ Error: Telegram StringSession is not authorized! Please generate a new TG_SESSION.")
-                sys.exit(1)
-    except (errors.AuthKeyDuplicatedError, errors.AuthKeyUnregisteredError) as e:
-        print("\n❌ CRITICAL AUTH ERROR: Session invalidated by Telegram.")
-        print("This TG_SESSION was used simultaneously from another IP/device.")
-        sys.exit(1)
+            await asyncio.gather(*(c.connect() for c in clients))
+            for c in clients:
+                if not await c.is_user_authorized():
+                    print("❌ Error: Telegram StringSession is not authorized!")
+                    sys.exit(1)
     except Exception as e:
-        print(f"❌ Failed to connect to Telegram: {e}")
+        print(f"❌ Failed to connect connection pool: {e}")
         sys.exit(1)
 
     try:
-        me = await client.get_me()
+        primary_client = clients[0]
+        me = await primary_client.get_me()
         user_type = "Bot" if getattr(me, "bot", False) else "User"
         print(f"✅ Connected as {user_type}: {me.first_name} (@{me.username or 'NoUsername'}) [ID: {me.id}]")
 
-        try:
-            entity = await client.get_input_entity(channel_target)
-        except Exception as e:
-            print(f"❌ Error finding channel '{tg_channel}': {e}")
-            sys.exit(1)
+        # Resolve entity for all clients
+        entities = await asyncio.gather(*(c.get_input_entity(channel_target) for c in clients))
 
         mapping_file = hls_dir / "mapping.json"
         mapping = {}
@@ -283,6 +269,9 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
 
         async def worker(worker_id: int):
             nonlocal completed_count, uploaded_bytes
+            client = clients[worker_id % num_clients]
+            entity = entities[worker_id % num_clients]
+
             while not queue.empty() and not fatal_error_event.is_set():
                 try:
                     seg_path: Path = await queue.get()
@@ -303,9 +292,9 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
                         if not client.is_connected():
                             await client.connect()
 
-                        # Step 1: Fast multi-part upload to Telegram storage
+                        # Step 1: Upload multipart to Telegram DC via dedicated socket
                         input_file = await asyncio.wait_for(
-                            fast_upload_file(client, seg_path, part_concurrency=4),
+                            fast_upload_file(client, seg_path),
                             timeout=upload_timeout
                         )
 
@@ -348,10 +337,10 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
                         print(f"\n❌ [Worker {worker_id}] CRITICAL AUTH ERROR: Session revoked.")
                         fatal_error_event.set()
                         queue.task_done()
-                        raise RuntimeError("Invalid Telegram session key") from e
+                        raise RuntimeError("Invalid Telegram session") from e
 
                     except (ConnectionError, errors.DisconnectedError) as e:
-                        print(f"⚠️ [Worker {worker_id}] Connection lost on {fname}: {e}. Reconnecting...")
+                        print(f"⚠️ [Worker {worker_id}] Connection reset on {fname}: {e}. Reconnecting...")
                         try:
                             if client.is_connected():
                                 await client.disconnect()
@@ -359,7 +348,7 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
                         except Exception:
                             pass
                         if attempt < 3:
-                            await asyncio.sleep(2 * attempt)
+                            await asyncio.sleep(1.5 * attempt)
                         else:
                             queue.task_done()
                             raise
@@ -371,14 +360,14 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
                     except Exception as e:
                         print(f"⚠️ [Worker {worker_id}] Attempt {attempt}/3 on {fname} error: {e}")
                         if attempt < 3:
-                            await asyncio.sleep(2 * attempt)
+                            await asyncio.sleep(1.5 * attempt)
                         else:
                             queue.task_done()
                             print(f"❌ Failed to upload {fname} after 3 attempts.")
                             raise
 
         num_workers = min(concurrency, len(pending_segments)) if pending_segments else 1
-        worker_tasks = [asyncio.create_task(worker(i + 1)) for i in range(num_workers)]
+        worker_tasks = [asyncio.create_task(worker(i)) for i in range(num_workers)]
 
         try:
             await asyncio.gather(*worker_tasks)
@@ -424,8 +413,9 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
         print(f" - {mapping_file.resolve()}")
 
     finally:
-        if client.is_connected():
-            await client.disconnect()
+        for c in clients:
+            if c.is_connected():
+                await c.disconnect()
 
 
 def main():

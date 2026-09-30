@@ -16,7 +16,7 @@ on:
       segment_time:
         description: "HLS Segment Duration (seconds)"
         required: false
-        default: "6"
+        default: "10"
         type: string
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
       TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
       WORKER_URL: ${{ secrets.WORKER_URL }}
 
-      TG_UPLOAD_CONCURRENCY: "4"
+      TG_UPLOAD_CONCURRENCY: "8"
       TG_UPLOAD_TIMEOUT: "900"
 
     steps:
