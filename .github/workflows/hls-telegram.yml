@@ -1,0 +1,293 @@
+name: Video URL to HLS Telegram
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Direct Video URL"
+        required: true
+        type: string
+
+      movie_name:
+        description: "Movie / Video Name"
+        required: true
+        type: string
+
+      segment_time:
+        description: "HLS Segment Duration (seconds)"
+        required: false
+        default: "6"
+        type: string
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      TG_API_ID: ${{ secrets.TG_API_ID }}
+      TG_API_HASH: ${{ secrets.TG_API_HASH }}
+      TG_SESSION: ${{ secrets.TG_SESSION }}
+      TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
+      WORKER_URL: ${{ secrets.WORKER_URL }}
+
+      TG_UPLOAD_CONCURRENCY: "5"
+      TG_UPLOAD_TIMEOUT: "900"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg & System Tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl file
+          echo "FFmpeg Version:"
+          ffmpeg -version | head -n 1
+          echo "Python Version:"
+          python3 --version
+          echo "Curl Version:"
+          curl --version | head -n 1
+
+      - name: Install Python Dependencies
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            python3 -m pip install -r requirements.txt
+          fi
+          python3 -m pip install telethon aiohttp
+          python3 -c "import telethon; print('Telethon version:', telethon.__version__)"
+
+      - name: Validate Python Script Syntax
+        run: |
+          set -euo pipefail
+          if [ -f scripts/process.py ]; then
+            python3 -m py_compile scripts/process.py
+            echo "✅ scripts/process.py syntax verified."
+          elif [ -f process.py ]; then
+            python3 -m py_compile process.py
+            echo "✅ process.py syntax verified."
+          else
+            echo "❌ process.py file not found!"
+            exit 1
+          fi
+
+      - name: Prepare Workspace
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/hls_pipeline
+          mkdir -p /tmp/hls_pipeline/input
+          mkdir -p /tmp/hls_pipeline/hls
+          mkdir -p /tmp/hls_pipeline/output
+          echo "Workspace ready."
+          df -h /tmp
+
+      - name: Check Telegram Configuration
+        run: |
+          set -euo pipefail
+          echo "Checking Telegram configuration secrets..."
+          for var in TG_API_ID TG_API_HASH TG_SESSION TG_CHANNEL WORKER_URL; do
+            if [ -z "${!var}" ]; then
+              echo "❌ Secret $var is missing!"
+              exit 1
+            fi
+          done
+          echo "✅ All Telegram secrets found."
+
+      - name: Test Video URL
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+        run: |
+          set -euo pipefail
+
+          echo "=================================================="
+          echo "VIDEO URL TEST"
+          echo "=================================================="
+
+          if [ -z "${VIDEO_URL:-}" ]; then
+            echo "❌ VIDEO_URL is empty. Provide a valid direct media URL."
+            exit 1
+          fi
+
+          echo "URL length: ${#VIDEO_URL}"
+
+          echo
+          echo "===== HTTP HEAD ====="
+
+          curl \
+            -sS \
+            -L \
+            -D /tmp/hls_url_headers.txt \
+            -o /tmp/hls_url_probe.bin \
+            --max-time 60 \
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154 Safari/537.36" \
+            "$VIDEO_URL" || true
+
+          echo
+          echo "===== RESPONSE HEADERS ====="
+          sed -n '1,40p' /tmp/hls_url_headers.txt || true
+
+          echo
+          echo "===== RESPONSE BODY PREVIEW ====="
+          wc -c /tmp/hls_url_probe.bin || true
+          head -c 512 /tmp/hls_url_probe.bin || true
+
+          HTTP_STATUS=$(awk 'BEGIN{code="000"} /^HTTP\// {code=$2} END {print code}' /tmp/hls_url_headers.txt 2>/dev/null || echo "000")
+
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "206" ]; then
+            echo
+            echo "❌ Video URL is not returning a playable response (HTTP $HTTP_STATUS)."
+            echo "Ensure the input is a valid direct media URL, not a landing page or expired link."
+            exit 1
+          fi
+
+          echo
+          echo "===== TEST COMPLETE ====="
+
+      - name: Download Video
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+        run: |
+          set -euo pipefail
+
+          OUTPUT_FILE="/tmp/hls_pipeline/input/video.mp4"
+
+          echo "=================================================="
+          echo "VIDEO DOWNLOAD"
+          echo "=================================================="
+
+          curl \
+            -L \
+            --fail-with-body \
+            --retry 5 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            --connect-timeout 30 \
+            --max-time 3600 \
+            --continue-at - \
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154 Safari/537.36" \
+            -H "Accept: */*" \
+            -H "Accept-Language: en-US,en;q=0.9" \
+            -o "$OUTPUT_FILE" \
+            "$VIDEO_URL"
+
+          if [ ! -s "$OUTPUT_FILE" ]; then
+            echo "❌ Downloaded file is empty. Check that the URL points to a valid direct video source."
+            exit 1
+          fi
+
+          echo
+          echo "===== DOWNLOAD COMPLETE ====="
+          ls -lh "$OUTPUT_FILE"
+
+          echo
+          echo "===== FILE TYPE ====="
+          file "$OUTPUT_FILE"
+
+          echo
+          echo "===== FILE SIZE ====="
+          stat -c "%n -> %s bytes" "$OUTPUT_FILE"
+
+      - name: Verify Video
+        run: |
+          set -euo pipefail
+          echo "=================================================="
+          echo "FFPROBE"
+          echo "=================================================="
+
+          ffprobe \
+            -hide_banner \
+            -v error \
+            -show_entries format=filename,format_name,duration,size \
+            -show_entries stream=index,codec_name,codec_type,width,height,channels,sample_rate \
+            -of default=noprint_wrappers=1 \
+            /tmp/hls_pipeline/input/video.mp4
+
+      - name: Create HLS
+        env:
+          SEGMENT_TIME: ${{ inputs.segment_time }}
+        run: |
+          set -euo pipefail
+          echo "=================================================="
+          echo "FFMPEG HLS"
+          echo "=================================================="
+
+          rm -rf /tmp/hls_pipeline/hls/*
+          ffmpeg \
+            -hide_banner \
+            -y \
+            -i /tmp/hls_pipeline/input/video.mp4 \
+            -map 0:v:0 \
+            -map 0:a:0? \
+            -c:v copy \
+            -c:a aac \
+            -b:a 192k \
+            -ac 2 \
+            -fflags +genpts \
+            -avoid_negative_ts make_zero \
+            -f hls \
+            -hls_time "$SEGMENT_TIME" \
+            -hls_playlist_type vod \
+            -hls_flags independent_segments \
+            -hls_segment_filename "/tmp/hls_pipeline/hls/segment_%05d.ts" \
+            /tmp/hls_pipeline/hls/local.m3u8
+
+          echo
+          echo "===== HLS FILES ====="
+          ls -lh /tmp/hls_pipeline/hls/
+
+          echo
+          echo "===== LOCAL M3U8 ====="
+          cat /tmp/hls_pipeline/hls/local.m3u8
+
+      - name: Check Segments
+        run: |
+          set -euo pipefail
+          COUNT=$(find /tmp/hls_pipeline/hls -name "segment_*.ts" -type f | wc -l)
+          echo "Segments: $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "❌ No segments generated."
+            exit 1
+          fi
+          echo "✅ HLS segmentation successful."
+
+      - name: Upload HLS to Telegram
+        run: |
+          set -euo pipefail
+          echo "=================================================="
+          echo "TELEGRAM MTProto UPLOAD"
+          echo "=================================================="
+          if [ -f scripts/process.py ]; then
+            python3 scripts/process.py /tmp/hls_pipeline/hls "${{ inputs.movie_name }}"
+          elif [ -f process.py ]; then
+            python3 process.py /tmp/hls_pipeline/hls "${{ inputs.movie_name }}"
+          else
+            echo "❌ process.py script not found!"
+            exit 1
+          fi
+
+      - name: Show Final Output
+        if: success()
+        run: |
+          set -euo pipefail
+          echo "=================================================="
+          echo "FINAL OUTPUT"
+          echo "=================================================="
+
+          echo
+          echo "===== INDEX M3U8 ====="
+          cat /tmp/hls_pipeline/hls/index.m3u8
+
+          echo
+          echo "===== MAPPING ====="
+          cat /tmp/hls_pipeline/hls/mapping.json
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "Cleaning temporary files..."
+          rm -rf /tmp/hls_pipeline
+          echo "✅ Cleanup complete."
