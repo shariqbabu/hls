@@ -30,7 +30,7 @@ jobs:
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_SESSION: ${{ secrets.TG_SESSION }}
       TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
-      WORKER_URL: ${{ secrets.WORKER_URL }}
+      WORKER_URL: "https://live.betadda.workers.dev/api/tg/stream"
 
       TG_UPLOAD_CONCURRENCY: "8"
       TG_UPLOAD_TIMEOUT: "900"
@@ -89,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Checking Telegram configuration secrets..."
-          for var in TG_API_ID TG_API_HASH TG_CHANNEL WORKER_URL; do
+          for var in TG_API_ID TG_API_HASH TG_CHANNEL; do
             if [ -z "${!var}" ]; then
               echo "❌ Secret $var is missing!"
               exit 1

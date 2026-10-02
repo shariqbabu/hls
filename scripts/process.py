@@ -171,7 +171,8 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     raw_session = get_env_var("TG_SESSION", default="")
     tg_bot_token = get_env_var("TG_BOT_TOKEN", default="")
     tg_channel = get_env_var("TG_CHANNEL", required=True)
-    worker_url = get_env_var("WORKER_URL", required=True)
+    raw_worker_url = get_env_var("WORKER_URL", default="https://live.betadda.workers.dev/api/tg/stream")
+    worker_url = "https://live.betadda.workers.dev/api/tg/stream" if (not raw_worker_url or "***" in raw_worker_url) else raw_worker_url
 
     tg_session = sanitize_session_string(raw_session)
 
