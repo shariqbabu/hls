@@ -1,0 +1,63 @@
+name: Convert hls to Hugging Face
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Direct HTTP(S) download URL for MP4/MKV/HEVC"
+        required: true
+        type: string
+      input_format:
+        description: "Select hevc only for a raw HEVC elementary stream"
+        required: true
+        type: choice
+        options:
+          - auto
+          - mp4
+          - mkv
+          - hevc
+        default: auto
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-hls-upload
+  cancel-in-progress: false
+
+jobs:
+  convert-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install FFmpeg and Git
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg git curl
+
+      - name: Install Node dependencies
+        run: npm install --package-lock-only && npm ci
+
+      - name: Download, convert, upload, and clean up
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+          INPUT_FORMAT: ${{ inputs.input_format }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
+          HF_REPO_TYPE: dataset
+        run: node index.js
+
+      - name: Cleanup even if a previous step fails
+        if: always()
+        run: |
+          rm -rf temp-work hls-output
