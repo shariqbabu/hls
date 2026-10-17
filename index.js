@@ -9,7 +9,7 @@ const inputFormat = (env.INPUT_FORMAT || "auto").toLowerCase();
 const hfToken = env.HF_TOKEN;
 const hfRepoId = env.HF_REPO_ID;
 const hfRepoType = (env.HF_REPO_TYPE || "dataset").toLowerCase();
-const outputDir = path.resolve("hls-output");
+const outputDir = path.resolve("hls/series/indias-got-latent/1");
 const tempDir = path.resolve("temp-work");
 
 function run(command, args, options = {}) {
