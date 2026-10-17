@@ -137,7 +137,7 @@ async function main() {
       "-vf",
       "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
       "-c:v", "libx264",
-      "-preset", "veryfast",
+      "-preset", "ultrafast",
       "-crf", "23",
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
