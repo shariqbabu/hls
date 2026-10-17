@@ -1,14 +1,22 @@
-name: Convert hls to Hugging Face
+
+name: Convert Video to HLS and Push to Hugging Face
 
 on:
   workflow_dispatch:
     inputs:
-      video_url:
-        description: "Direct HTTP(S) download URL for MP4/MKV/HEVC"
+      output_dir:
+        description: "Hugging Face output folder"
         required: true
         type: string
+        default: hls
+
+      video_url:
+        description: "Direct MP4, MKV, or HEVC video URL"
+        required: true
+        type: string
+
       input_format:
-        description: "Select hevc only for a raw HEVC elementary stream"
+        description: "Video input format"
         required: true
         type: choice
         options:
@@ -50,6 +58,7 @@ jobs:
 
       - name: Download, convert, upload, and clean up
         env:
+          OUTPUT_DIR: ${{ inputs.output_dir }}
           VIDEO_URL: ${{ inputs.video_url }}
           INPUT_FORMAT: ${{ inputs.input_format }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
