@@ -1,0 +1,127 @@
+
+{
+  "schema_version": 1,
+  "tmdb_id": 262838,
+  "media_type": "series",
+  "title": "India's Got Latent",
+  "overview": "Samay Raina and guest judges hilariously critique the untapped talents of aspiring performers, testing their self-awareness with a unique scoring system.",
+  "release_date": 2024,
+  "language": "hi",
+  "seasons": [
+    {
+      "season_number": 2,
+      "episodes": [
+        {
+          "episode_number": 1,
+          "title": "India's Got Latent — Episode 1",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/1/poster.jpg",
+          "plot": "Alia Bhatt, Sharvari, and Ashish Solanki join the show for a round of unpredictable talent performances, sharp humour, and candid judging.",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/1/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 2,
+          "title": "India's Got Latent — Episode 2",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/2/poster.jpg",
+          "plot": "Chandan Prabhakar, Kiku Sharda, Balraj Ghai, and Harssh Limbachiyaa appear alongside aspiring performers in a comedy-filled talent judging session.",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/2/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 3,
+          "title": "India's Got Latent — Episode 3",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/3/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/3/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 4,
+          "title": "India's Got Latent — Episode 4",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/4/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/4/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 5,
+          "title": "India's Got Latent — Episode 5",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/5/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/5/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 6,
+          "title": "India's Got Latent — Episode 6",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/6/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/6/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 7,
+          "title": "India's Got Latent — Episode 7",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/7/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/7/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 8,
+          "title": "India's Got Latent — Episode 8",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/8/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/8/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 9,
+          "title": "India's Got Latent — Episode 9",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/9/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/9/master.m3u8",
+            "format": "hls"
+          }
+        },
+        {
+          "episode_number": 10,
+          "title": "India's Got Latent — Episode 10",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/10/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/10/master.m3u8",
+            "format": "hls"
+          }
+        }
+      ]
+    }
+  ]
+}
