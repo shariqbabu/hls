@@ -2,89 +2,759 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>SonyLiv Hindi - Shaka Player Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>SonyLiv Hindi HD - Live Player</title>
   <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.16.30/dist/shaka-player.compiled.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
-    body {
+    :root {
+      --primary: #e50914;
+      --bg: #0b0c10;
+      --panel-bg: rgba(20, 22, 31, 0.95);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #ffffff;
+      --text-sub: #a0a5b5;
+    }
+
+    * {
+      box-sizing: border-box;
       margin: 0;
-      background: #0d0d15;
-      color: #fff;
-      font-family: sans-serif;
+      padding: 0;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
       min-height: 100vh;
+      padding: 10px;
+      overflow-x: hidden;
     }
-    h2 { margin: 10px 0; }
-    #videoContainer {
-      width: 90%;
-      max-width: 960px;
-      aspect-ratio: 16/9;
+
+    /* Player Outer Frame */
+    .player-container {
+      position: relative;
+      width: 100%;
+      max-width: 1100px;
+      aspect-ratio: 16 / 9;
       background: #000;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.8);
-      border-radius: 8px;
+      border-radius: 12px;
       overflow: hidden;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: max-width 0.3s ease, aspect-ratio 0.3s ease;
     }
+
+    /* Size Adjust Modes */
+    .player-container.size-theater {
+      max-width: 100% !important;
+      border-radius: 4px;
+    }
+    .player-container.size-4-3 {
+      aspect-ratio: 4 / 3 !important;
+      max-width: 800px;
+    }
+
+    /* Video element */
     video {
       width: 100%;
       height: 100%;
+      display: block;
+      object-fit: contain; /* default fit */
+      background: #000;
+      cursor: pointer;
     }
-    .info {
-      margin-top: 15px;
-      background: #181824;
-      padding: 12px 20px;
+
+    /* Video scaling classes */
+    video.fit-contain { object-fit: contain; }
+    video.fit-cover   { object-fit: cover; }
+    video.fit-fill    { object-fit: fill; }
+    video.fit-scale   { object-fit: scale-down; }
+
+    /* Big Center Play/Pause Indicator */
+    .center-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 76px;
+      height: 76px;
+      background: rgba(0, 0, 0, 0.65);
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      color: #fff;
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 5;
+    }
+    .center-overlay.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .center-overlay:hover {
+      transform: translate(-50%, -50%) scale(1.1);
+      background: var(--primary);
+    }
+
+    /* Spinner */
+    .spinner {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 50px;
+      height: 50px;
+      border: 4px solid rgba(255, 255, 255, 0.2);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      z-index: 6;
+      display: none;
+    }
+    @keyframes spin { 100% { transform: translate(-50%, -50%) rotate(360deg); } }
+
+    /* Top Bar (Channel Info + Live Indicator) */
+    .top-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 16px 20px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 10;
+      opacity: 1;
+      transition: opacity 0.3s;
+    }
+    .top-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+    }
+    .badge-live {
+      background: var(--primary);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.8px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      background: #fff;
+      border-radius: 50%;
+      animation: pulse 1.4s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    /* Bottom Control Bar */
+    .controls-overlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 12px 18px;
+      background: linear-gradient(0deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 60%, rgba(0,0,0,0) 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 10;
+      opacity: 1;
+      transition: opacity 0.3s ease;
+    }
+    .player-container.hide-controls .top-bar,
+    .player-container.hide-controls .controls-overlay {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .ctrl-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .ctrl-left, .ctrl-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .ctrl-btn {
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 6px 8px;
       border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s, background 0.15s, transform 0.1s;
+    }
+    .ctrl-btn:hover {
+      color: var(--primary);
+      background: rgba(255, 255, 255, 0.1);
+      transform: scale(1.08);
+    }
+    .ctrl-btn:active {
+      transform: scale(0.95);
+    }
+
+    /* Volume Slider */
+    .volume-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .volume-slider {
+      -webkit-appearance: none;
+      width: 70px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    .volume-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      background: #fff;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    /* Modal / Popups (Quality & Size Menus) */
+    .menu-popup {
+      position: absolute;
+      bottom: 60px;
+      right: 18px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 0;
+      min-width: 180px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.8);
+      backdrop-filter: blur(12px);
+      z-index: 20;
+      display: none;
+      flex-direction: column;
+      animation: fadeIn 0.15s ease-out;
+    }
+    .menu-popup.open {
+      display: flex;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .menu-header {
+      padding: 6px 16px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-sub);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .menu-item {
+      padding: 9px 16px;
       font-size: 13px;
-      max-width: 920px;
-      word-break: break-all;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text);
+      transition: background 0.15s, color 0.15s;
+    }
+    .menu-item:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--primary);
+    }
+    .menu-item.active {
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .menu-item i.check {
+      font-size: 12px;
+      opacity: 0;
+    }
+    .menu-item.active i.check {
+      opacity: 1;
+    }
+
+    /* External Info Card */
+    .channel-meta {
+      width: 100%;
+      max-width: 1100px;
+      margin-top: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+    }
+    .meta-tags {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .tag {
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      padding: 3px 8px;
+      color: var(--text-sub);
+      font-size: 12px;
+    }
+    .tag.accent {
+      background: rgba(229, 9, 20, 0.15);
+      color: #ff5252;
+      border: 1px solid rgba(229, 9, 20, 0.3);
     }
   </style>
 </head>
 <body>
-  <h2>🏏 SonyLiv Hindi - Live Stream (ClearKey DRM)</h2>
-  <div id="videoContainer">
-    <video id="video" controls autoplay playsinline></video>
+
+  <!-- Main Player Container -->
+  <div class="player-container" id="playerContainer">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div class="top-title">
+        <span class="badge-live"><span class="live-dot"></span> LIVE</span>
+        <span>SonyLiv Hindi HD (Sports & Cricket)</span>
+      </div>
+      <div style="font-size: 12px; color: var(--text-sub);">
+        <i class="fa-solid fa-lock" style="color: #4caf50;"></i> ClearKey DRM Encrypted
+      </div>
+    </div>
+
+    <!-- Center Play/Pause button for click-to-play -->
+    <div class="center-overlay" id="centerOverlay" onclick="togglePlay()">
+      <i class="fa-solid fa-play" id="centerIcon"></i>
+    </div>
+
+    <!-- Spinner -->
+    <div class="spinner" id="spinner"></div>
+
+    <!-- Video Element -->
+    <video id="video" playsinline autoplay muted onclick="togglePlay()"></video>
+
+    <!-- Bottom Controls -->
+    <div class="controls-overlay">
+      <div class="ctrl-row">
+        <!-- Left Controls -->
+        <div class="ctrl-left">
+          <!-- Play / Pause -->
+          <button class="ctrl-btn" onclick="togglePlay()" title="Play / Pause">
+            <i class="fa-solid fa-play" id="playIcon"></i>
+          </button>
+
+          <!-- Volume / Mute -->
+          <div class="volume-group">
+            <button class="ctrl-btn" onclick="toggleMute()" title="Mute / Unmute">
+              <i class="fa-solid fa-volume-xmark" id="volumeIcon"></i>
+            </button>
+            <input type="range" min="0" max="1" step="0.05" value="0" class="volume-slider" id="volumeSlider" oninput="onVolumeChange(this.value)">
+          </div>
+
+          <!-- Quality Label Badge -->
+          <span style="font-size: 12px; color: var(--text-sub); background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px;" id="currentQualityBadge">Auto</span>
+        </div>
+
+        <!-- Right Controls -->
+        <div class="ctrl-right">
+          <!-- Aspect / Fit Size Menu Toggle -->
+          <button class="ctrl-btn" onclick="toggleMenu('sizeMenu')" title="Size / Aspect Ratio">
+            <i class="fa-solid fa-expand"></i>
+          </button>
+
+          <!-- Quality Menu Toggle -->
+          <button class="ctrl-btn" onclick="toggleMenu('qualityMenu')" title="Resolution / Quality">
+            <i class="fa-solid fa-gear"></i>
+          </button>
+
+          <!-- Fullscreen Toggle -->
+          <button class="ctrl-btn" onclick="toggleFullscreen()" title="Fullscreen">
+            <i class="fa-solid fa-up-right-and-down-left-from-center" id="fsIcon"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quality Selection Popup Menu -->
+    <div class="menu-popup" id="qualityMenu">
+      <div class="menu-header">Streaming Quality</div>
+      <div id="qualityItemsContainer">
+        <div class="menu-item active" onclick="setQuality('auto')">
+          <span>Auto (Adaptive)</span>
+          <i class="fa-solid fa-check check"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Screen Size / Fit Popup Menu -->
+    <div class="menu-popup" id="sizeMenu">
+      <div class="menu-header">Screen Size & Fit</div>
+      <div class="menu-item active" onclick="setFitMode('contain', this)">
+        <span>Fit Screen (Original 16:9)</span>
+        <i class="fa-solid fa-check check"></i>
+      </div>
+      <div class="menu-item" onclick="setFitMode('cover', this)">
+        <span>Zoom to Fill (Crop Edges)</span>
+        <i class="fa-solid fa-check check"></i>
+      </div>
+      <div class="menu-item" onclick="setFitMode('fill', this)">
+        <span>Stretch to Screen (Fill)</span>
+        <i class="fa-solid fa-check check"></i>
+      </div>
+      <div class="menu-item" onclick="toggleTheaterMode(this)">
+        <span>Theater Mode (100% Width)</span>
+        <i class="fa-solid fa-check check"></i>
+      </div>
+      <div class="menu-item" onclick="setAspectRatio('4-3', this)">
+        <span>Classic 4:3 Ratio</span>
+        <i class="fa-solid fa-check check"></i>
+      </div>
+    </div>
   </div>
-  <div class="info">
-    <b>Manifest:</b> https://otte.live.fly.ww.aiv-cdn.net/fra-nitro/live/clients/dash/enc/mmvlg151u6/out/v1/ab9d1f193c094ee8a9305f983a716f35/cenc.mpd<br>
-    <b>ClearKey:</b> 18e6af4a0daf2a1fdfbdc5b541520c88 : ca0b64b84edb4f20eb1e135ff03db4f7
+
+  <!-- Channel Metadata Bar -->
+  <div class="channel-meta">
+    <div>
+      <b style="font-size: 14px;">SonyLiv Live (MHDTV Touchcric CDN)</b>
+      <div style="color: var(--text-sub); font-size: 12px; margin-top: 2px;">
+        MPEG-DASH Live Feed decrypted via Hardware ClearKey EME
+      </div>
+    </div>
+    <div class="meta-tags">
+      <span class="tag accent">1080p 60fps</span>
+      <span class="tag">Dual Audio</span>
+      <span class="tag">Low Latency</span>
+      <span class="tag" id="currentBitrateTag">Bitrate: ~3.8 Mbps</span>
+    </div>
   </div>
 
   <script>
-    async function initApp() {
+    const MANIFEST_URL = "https://otte.live.fly.ww.aiv-cdn.net/fra-nitro/live/clients/dash/enc/mmvlg151u6/out/v1/ab9d1f193c094ee8a9305f983a716f35/cenc.mpd";
+    const DRM_KID = "18e6af4a0daf2a1fdfbdc5b541520c88";
+    const DRM_KEY = "ca0b64b84edb4f20eb1e135ff03db4f7";
+
+    let player = null;
+    const video = document.getElementById('video');
+    const playerContainer = document.getElementById('playerContainer');
+    const playIcon = document.getElementById('playIcon');
+    const centerIcon = document.getElementById('centerIcon');
+    const centerOverlay = document.getElementById('centerOverlay');
+    const volumeIcon = document.getElementById('volumeIcon');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const spinner = document.getElementById('spinner');
+    const qualityItemsContainer = document.getElementById('qualityItemsContainer');
+    const currentQualityBadge = document.getElementById('currentQualityBadge');
+    const currentBitrateTag = document.getElementById('currentBitrateTag');
+
+    let controlsTimeout = null;
+
+    // -------------------------------------------------------------
+    // 1. Shaka Player Setup with ClearKey DRM
+    // -------------------------------------------------------------
+    async function initPlayer() {
       shaka.polyfill.installAll();
       if (!shaka.Player.isBrowserSupported()) {
-        console.error('Browser not supported!');
+        alert('Shaka Player is not supported on this browser!');
         return;
       }
 
-      const video = document.getElementById('video');
-      const player = new shaka.Player(video);
+      spinner.style.display = 'block';
+      player = new shaka.Player();
+      await player.attach(video);
 
-      // Configure ClearKey DRM
+      // Setup ClearKey DRM & Playback Optimization
       player.configure({
+        manifest: {
+          dash: {
+            ignoreMinBufferTime: true,
+            autoCorrectDrift: true
+          }
+        },
+        streaming: {
+          jumpLargeGaps: true,
+          bufferingGoal: 20,
+          rebufferingGoal: 2.5,
+          startAtSegmentBoundary: false,
+          stallEnabled: true,
+          stallThreshold: 2.0
+        },
         drm: {
           clearKeys: {
-            '18e6af4a0daf2a1fdfbdc5b541520c88': 'ca0b64b84edb4f20eb1e135ff03db4f7'
-          }
+            [DRM_KID]: DRM_KEY
+          },
+          preferredKeySystems: ['org.w3.clearkey'],
+          delayLicenseRequestUntilPlayed: false
+        },
+        abr: {
+          enabled: true,
+          defaultBandwidthEstimate: 4000000
         }
       });
 
-      player.addEventListener('error', (e) => {
-        console.error('Player error:', e.detail);
+      player.addEventListener('error', (event) => {
+        console.error('Shaka Error:', event.detail);
+        spinner.style.display = 'none';
+      });
+
+      player.addEventListener('buffering', (event) => {
+        spinner.style.display = event.buffering ? 'block' : 'none';
+      });
+
+      player.addEventListener('adaptation', () => {
+        updateActiveTrackDisplay();
       });
 
       try {
-        const manifestUrl = 'https://otte.live.fly.ww.aiv-cdn.net/fra-nitro/live/clients/dash/enc/mmvlg151u6/out/v1/ab9d1f193c094ee8a9305f983a716f35/cenc.mpd';
-        await player.load(manifestUrl);
-        console.log('Stream loaded successfully!');
+        await player.load(MANIFEST_URL, null, 'application/dash+xml');
+        spinner.style.display = 'none';
+        buildQualityMenu();
+        syncPlayState();
       } catch (err) {
-        console.error('Load failed:', err);
+        console.error('Manifest Load Failed:', err);
+        spinner.style.display = 'none';
       }
     }
 
-    document.addEventListener('DOMContentLoaded', initApp);
+    // -------------------------------------------------------------
+    // 2. Play / Pause / Mute Handlers
+    // -------------------------------------------------------------
+    function togglePlay() {
+      if (video.paused) {
+        video.play().catch(e => console.warn(e));
+      } else {
+        video.pause();
+      }
+      syncPlayState();
+    }
+
+    function syncPlayState() {
+      if (video.paused) {
+        playIcon.className = 'fa-solid fa-play';
+        centerIcon.className = 'fa-solid fa-play';
+        centerOverlay.classList.add('visible');
+      } else {
+        playIcon.className = 'fa-solid fa-pause';
+        centerIcon.className = 'fa-solid fa-pause';
+        centerOverlay.classList.remove('visible');
+      }
+    }
+
+    video.addEventListener('play', syncPlayState);
+    video.addEventListener('pause', syncPlayState);
+
+    function toggleMute() {
+      video.muted = !video.muted;
+      if (video.muted) {
+        volumeIcon.className = 'fa-solid fa-volume-xmark';
+        volumeSlider.value = 0;
+      } else {
+        if (video.volume === 0) video.volume = 0.8;
+        volumeIcon.className = 'fa-solid fa-volume-high';
+        volumeSlider.value = video.volume;
+      }
+    }
+
+    function onVolumeChange(val) {
+      video.volume = parseFloat(val);
+      video.muted = (video.volume === 0);
+      if (video.muted) {
+        volumeIcon.className = 'fa-solid fa-volume-xmark';
+      } else if (video.volume < 0.5) {
+        volumeIcon.className = 'fa-solid fa-volume-low';
+      } else {
+        volumeIcon.className = 'fa-solid fa-volume-high';
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 3. Dynamic Quality Menu & Switching
+    // -------------------------------------------------------------
+    function buildQualityMenu() {
+      if (!player) return;
+      const tracks = player.getVariantTracks()
+        .filter(t => t.height && t.bandwidth)
+        .sort((a, b) => b.height - a.height);
+
+      // De-duplicate by height (1080p, 720p, 540p, 360p)
+      const uniqueQualities = [];
+      const seen = new Set();
+      for (const t of tracks) {
+        if (!seen.has(t.height)) {
+          seen.add(t.height);
+          uniqueQualities.push(t);
+        }
+      }
+
+      qualityItemsContainer.innerHTML = '';
+
+      // Auto Option
+      const autoDiv = document.createElement('div');
+      autoDiv.className = 'menu-item active';
+      autoDiv.id = 'quality-opt-auto';
+      autoDiv.innerHTML = `<span>Auto (Adaptive)</span><i class="fa-solid fa-check check"></i>`;
+      autoDiv.onclick = () => setQuality('auto');
+      qualityItemsContainer.appendChild(autoDiv);
+
+      // Specific Resolution Options
+      uniqueQualities.forEach(t => {
+        const item = document.createElement('div');
+        item.className = 'menu-item';
+        item.id = `quality-opt-${t.height}`;
+        const mbps = (t.bandwidth / 1000000).toFixed(1);
+        item.innerHTML = `<span>${t.height}p <small style="color:var(--text-sub);">(${mbps} Mbps)</small></span><i class="fa-solid fa-check check"></i>`;
+        item.onclick = () => setQuality(t.height, t);
+        qualityItemsContainer.appendChild(item);
+      });
+    }
+
+    function setQuality(heightOrAuto, trackObj) {
+      if (!player) return;
+
+      document.querySelectorAll('#qualityItemsContainer .menu-item').forEach(el => el.classList.remove('active'));
+
+      if (heightOrAuto === 'auto') {
+        player.configure({ abr: { enabled: true } });
+        document.getElementById('quality-opt-auto')?.classList.add('active');
+        currentQualityBadge.textContent = 'Auto';
+      } else {
+        player.configure({ abr: { enabled: false } });
+        if (trackObj) {
+          player.selectVariantTrack(trackObj, /* clearBuffer */ true);
+        }
+        document.getElementById(`quality-opt-${heightOrAuto}`)?.classList.add('active');
+        currentQualityBadge.textContent = `${heightOrAuto}p`;
+      }
+      closeAllMenus();
+    }
+
+    function updateActiveTrackDisplay() {
+      if (!player) return;
+      const tracks = player.getVariantTracks();
+      const current = tracks.find(t => t.active);
+      if (current) {
+        const mbps = (current.bandwidth / 1000000).toFixed(1);
+        currentBitrateTag.textContent = `Bitrate: ~${mbps} Mbps (${current.height}p)`;
+        if (player.getConfiguration().abr.enabled) {
+          currentQualityBadge.textContent = `Auto (${current.height}p)`;
+        }
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 4. Video Size & Aspect Ratio Adjustments
+    // -------------------------------------------------------------
+    function setFitMode(mode, elem) {
+      video.className = `fit-${mode}`;
+      markActiveMenu(elem);
+      closeAllMenus();
+    }
+
+    function toggleTheaterMode(elem) {
+      playerContainer.classList.toggle('size-theater');
+      elem.classList.toggle('active');
+      closeAllMenus();
+    }
+
+    function setAspectRatio(ratio, elem) {
+      if (ratio === '4-3') {
+        playerContainer.classList.toggle('size-4-3');
+      }
+      elem.classList.toggle('active');
+      closeAllMenus();
+    }
+
+    function markActiveMenu(elem) {
+      const parent = elem.parentElement;
+      parent.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
+      elem.classList.add('active');
+    }
+
+    // -------------------------------------------------------------
+    // 5. Fullscreen & Menu Popups
+    // -------------------------------------------------------------
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        playerContainer.requestFullscreen().catch(err => alert(err.message));
+        document.getElementById('fsIcon').className = 'fa-solid fa-down-left-and-up-right-to-center';
+      } else {
+        document.exitFullscreen();
+        document.getElementById('fsIcon').className = 'fa-solid fa-up-right-and-down-left-from-center';
+      }
+    }
+
+    function toggleMenu(menuId) {
+      const menu = document.getElementById(menuId);
+      const isOpen = menu.classList.contains('open');
+      closeAllMenus();
+      if (!isOpen) {
+        menu.classList.add('open');
+      }
+    }
+
+    function closeAllMenus() {
+      document.querySelectorAll('.menu-popup').forEach(m => m.classList.remove('open'));
+    }
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.ctrl-btn') && !e.target.closest('.menu-popup')) {
+        closeAllMenus();
+      }
+    });
+
+    // -------------------------------------------------------------
+    // 6. Auto-Hide Controls on Inactivity
+    // -------------------------------------------------------------
+    function resetControlsTimer() {
+      playerContainer.classList.remove('hide-controls');
+      clearTimeout(controlsTimeout);
+      controlsTimeout = setTimeout(() => {
+        if (!video.paused && !document.querySelector('.menu-popup.open')) {
+          playerContainer.classList.add('hide-controls');
+        }
+      }, 3500);
+    }
+
+    playerContainer.addEventListener('mousemove', resetControlsTimer);
+    playerContainer.addEventListener('touchstart', resetControlsTimer);
+
+    document.addEventListener('DOMContentLoaded', initPlayer);
   </script>
 </body>
 </html>
