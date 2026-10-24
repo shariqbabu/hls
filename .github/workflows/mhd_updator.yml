@@ -26,7 +26,7 @@ jobs:
 
       - name: Run Key Extractor & HTML Updater
         run: |
-          node server.js
+          node mhdtv/server.js
 
       - name: Commit & Push if Updated
         run: |
