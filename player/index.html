@@ -3,17 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>SonyLiv Hindi HD - Live Player</title>
+  <title>Live Sports HD - Multi-Channel Player</title>
   <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.16.30/dist/shaka-player.compiled.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     :root {
       --primary: #e50914;
-      --bg: #0b0c10;
-      --panel-bg: rgba(20, 22, 31, 0.95);
+      --bg: #090a0f;
+      --card-bg: #13151f;
+      --panel-bg: rgba(18, 20, 30, 0.96);
       --border: rgba(255, 255, 255, 0.12);
       --text: #ffffff;
-      --text-sub: #a0a5b5;
+      --text-sub: #9ca3af;
     }
 
     * {
@@ -32,8 +33,52 @@
       flex-direction: column;
       align-items: center;
       min-height: 100vh;
-      padding: 10px;
+      padding: 12px 10px 40px;
       overflow-x: hidden;
+    }
+
+    /* Channel Selector Bar */
+    .channel-bar {
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      scrollbar-width: none;
+    }
+    .channel-bar::-webkit-scrollbar { display: none; }
+
+    .channel-tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-sub);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+    .channel-tab:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+    }
+    .channel-tab.active {
+      background: rgba(229, 9, 20, 0.16);
+      border-color: var(--primary);
+      color: #fff;
+      box-shadow: 0 0 16px rgba(229, 9, 20, 0.3);
+    }
+    .channel-tab .ch-icon {
+      font-size: 14px;
+      color: var(--primary);
     }
 
     /* Player Outer Frame */
@@ -67,12 +112,11 @@
       width: 100%;
       height: 100%;
       display: block;
-      object-fit: contain; /* default fit */
+      object-fit: contain;
       background: #000;
       cursor: pointer;
     }
 
-    /* Video scaling classes */
     video.fit-contain { object-fit: contain; }
     video.fit-cover   { object-fit: cover; }
     video.fit-fill    { object-fit: fill; }
@@ -126,7 +170,7 @@
     }
     @keyframes spin { 100% { transform: translate(-50%, -50%) rotate(360deg); } }
 
-    /* Top Bar (Channel Info + Live Indicator) */
+    /* Top Bar */
     .top-bar {
       position: absolute;
       top: 0;
@@ -145,7 +189,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 600;
       text-shadow: 0 2px 4px rgba(0,0,0,0.8);
     }
@@ -177,7 +221,7 @@
       left: 0;
       right: 0;
       padding: 12px 18px;
-      background: linear-gradient(0deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 60%, rgba(0,0,0,0) 100%);
+      background: linear-gradient(0deg, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.4) 60%, rgba(0,0,0,0) 100%);
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -220,9 +264,7 @@
       background: rgba(255, 255, 255, 0.1);
       transform: scale(1.08);
     }
-    .ctrl-btn:active {
-      transform: scale(0.95);
-    }
+    .ctrl-btn:active { transform: scale(0.95); }
 
     /* Volume Slider */
     .volume-group {
@@ -257,17 +299,15 @@
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 8px 0;
-      min-width: 180px;
-      box-shadow: 0 12px 32px rgba(0,0,0,0.8);
-      backdrop-filter: blur(12px);
+      min-width: 190px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.85);
+      backdrop-filter: blur(14px);
       z-index: 20;
       display: none;
       flex-direction: column;
       animation: fadeIn 0.15s ease-out;
     }
-    .menu-popup.open {
-      display: flex;
-    }
+    .menu-popup.open { display: flex; }
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(8px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -304,16 +344,14 @@
       font-size: 12px;
       opacity: 0;
     }
-    .menu-item.active i.check {
-      opacity: 1;
-    }
+    .menu-item.active i.check { opacity: 1; }
 
-    /* External Info Card */
+    /* Channel Metadata Card */
     .channel-meta {
       width: 100%;
       max-width: 1100px;
       margin-top: 14px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 14px 18px;
@@ -346,20 +384,36 @@
 </head>
 <body>
 
+  <!-- Channel Switcher Bar -->
+  <div class="channel-bar">
+    <div class="channel-tab active" id="tab-sonyliv_hindi" onclick="switchChannel('sonyliv_hindi')">
+      <i class="fa-solid fa-satellite-dish ch-icon"></i>
+      <span>SonyLiv Hindi HD</span>
+    </div>
+    <div class="channel-tab" id="tab-sonyliv_eng" onclick="switchChannel('sonyliv_eng')">
+      <i class="fa-solid fa-satellite-dish ch-icon"></i>
+      <span>SonyLiv English HD</span>
+    </div>
+    <div class="channel-tab" id="tab-fancode" onclick="switchChannel('fancode')">
+      <i class="fa-solid fa-baseball-bat-ball ch-icon"></i>
+      <span>FanCode HD</span>
+    </div>
+  </div>
+
   <!-- Main Player Container -->
   <div class="player-container" id="playerContainer">
     <!-- Top Bar -->
     <div class="top-bar">
       <div class="top-title">
         <span class="badge-live"><span class="live-dot"></span> LIVE</span>
-        <span>SonyLiv Hindi HD (Sports & Cricket)</span>
+        <span id="headerChannelTitle">SonyLiv Hindi HD</span>
       </div>
       <div style="font-size: 12px; color: var(--text-sub);">
         <i class="fa-solid fa-lock" style="color: #4caf50;"></i> ClearKey DRM Encrypted
       </div>
     </div>
 
-    <!-- Center Play/Pause button for click-to-play -->
+    <!-- Center Play/Pause button -->
     <div class="center-overlay" id="centerOverlay" onclick="togglePlay()">
       <i class="fa-solid fa-play" id="centerIcon"></i>
     </div>
@@ -394,12 +448,12 @@
 
         <!-- Right Controls -->
         <div class="ctrl-right">
-          <!-- Aspect / Fit Size Menu Toggle -->
+          <!-- Size / Aspect Ratio Menu -->
           <button class="ctrl-btn" onclick="toggleMenu('sizeMenu')" title="Size / Aspect Ratio">
             <i class="fa-solid fa-expand"></i>
           </button>
 
-          <!-- Quality Menu Toggle -->
+          <!-- Quality Menu -->
           <button class="ctrl-btn" onclick="toggleMenu('qualityMenu')" title="Resolution / Quality">
             <i class="fa-solid fa-gear"></i>
           </button>
@@ -452,25 +506,56 @@
   <!-- Channel Metadata Bar -->
   <div class="channel-meta">
     <div>
-      <b style="font-size: 14px;">SonyLiv Live (MHDTV Touchcric CDN)</b>
-      <div style="color: var(--text-sub); font-size: 12px; margin-top: 2px;">
+      <b style="font-size: 14px;" id="metaTitle">SonyLiv Hindi HD (Live Sports & Cricket)</b>
+      <div style="color: var(--text-sub); font-size: 12px; margin-top: 2px;" id="metaSub">
         MPEG-DASH Live Feed decrypted via Hardware ClearKey EME
       </div>
     </div>
     <div class="meta-tags">
       <span class="tag accent">1080p 60fps</span>
-      <span class="tag">Dual Audio</span>
+      <span class="tag" id="metaLangTag">Hindi</span>
       <span class="tag">Low Latency</span>
       <span class="tag" id="currentBitrateTag">Bitrate: ~3.8 Mbps</span>
     </div>
   </div>
 
   <script>
-    const MANIFEST_URL = "https://otte.live.fly.ww.aiv-cdn.net/fra-nitro/live/clients/dash/enc/mmvlg151u6/out/v1/ab9d1f193c094ee8a9305f983a716f35/cenc.mpd";
-    const DRM_KID = "18e6af4a0daf2a1fdfbdc5b541520c88";
-    const DRM_KEY = "ca0b64b84edb4f20eb1e135ff03db4f7";
+    // =========================================================================
+    // 📺 CHANNELS CONFIGURATION (Auto-refreshed via GitHub Actions)
+    // =========================================================================
+    const CHANNELS = {
+      sonyliv_hindi: {
+        id: "348",
+        name: "SonyLiv Hindi HD",
+        lang: "Hindi",
+        category: "Sports & Cricket",
+        manifestUrl: "https://otte.live.fly.ww.aiv-cdn.net/fra-nitro/live/clients/dash/enc/mmvlg151u6/out/v1/ab9d1f193c094ee8a9305f983a716f35/cenc.mpd",
+        kid: "18e6af4a0daf2a1fdfbdc5b541520c88",
+        key: "ca0b64b84edb4f20eb1e135ff03db4f7"
+      },
+      sonyliv_eng: {
+        id: "347",
+        name: "SonyLiv English HD",
+        lang: "English",
+        category: "Sports & Cricket",
+        manifestUrl: "https://otte.live.fly.ww.aiv-cdn.net/lhr-nitro/live/clients/dash/enc/di53wexuc7/out/v1/40b0a31c1c5b4f4aa41286cb1313cf87/cenc.mpd",
+        kid: "01501c3401dabab0e68c1d58b2ed5bde",
+        key: "4c1167220c5d1358d630245281ceba58"
+      },
+      fancode: {
+        id: "343",
+        name: "FanCode HD",
+        lang: "English / Hindi",
+        category: "Live Cricket",
+        manifestUrl: "https://otte.cache.aiv-cdn.net/iad-nitro/live/clients/dash/enc/avqlywnuzx/out/v1/aefca6420f944a9482e117f315de535f/cenc.mpd",
+        kid: "1994b1df7dfd2e8a8d7b9bf3fb900285",
+        key: "22a1444b3da18e139191665b3d652835"
+      }
+    };
 
+    let activeChannelKey = 'sonyliv_hindi';
     let player = null;
+
     const video = document.getElementById('video');
     const playerContainer = document.getElementById('playerContainer');
     const playIcon = document.getElementById('playIcon');
@@ -482,11 +567,14 @@
     const qualityItemsContainer = document.getElementById('qualityItemsContainer');
     const currentQualityBadge = document.getElementById('currentQualityBadge');
     const currentBitrateTag = document.getElementById('currentBitrateTag');
+    const headerChannelTitle = document.getElementById('headerChannelTitle');
+    const metaTitle = document.getElementById('metaTitle');
+    const metaLangTag = document.getElementById('metaLangTag');
 
     let controlsTimeout = null;
 
     // -------------------------------------------------------------
-    // 1. Shaka Player Setup with ClearKey DRM
+    // 1. Shaka Player Setup & Channel Loader
     // -------------------------------------------------------------
     async function initPlayer() {
       shaka.polyfill.installAll();
@@ -495,11 +583,36 @@
         return;
       }
 
-      spinner.style.display = 'block';
       player = new shaka.Player();
       await player.attach(video);
 
-      // Setup ClearKey DRM & Playback Optimization
+      player.addEventListener('error', (event) => {
+        console.error('Shaka Error:', event.detail);
+        spinner.style.display = 'none';
+      });
+
+      player.addEventListener('buffering', (event) => {
+        spinner.style.display = event.buffering ? 'block' : 'none';
+      });
+
+      player.addEventListener('adaptation', () => {
+        updateActiveTrackDisplay();
+      });
+
+      // Load initial channel
+      await loadChannel(activeChannelKey);
+    }
+
+    async function loadChannel(channelKey) {
+      const ch = CHANNELS[channelKey];
+      if (!ch || !player) return;
+
+      spinner.style.display = 'block';
+      headerChannelTitle.textContent = ch.name;
+      metaTitle.textContent = `${ch.name} (${ch.category})`;
+      metaLangTag.textContent = ch.lang;
+
+      // Configure Shaka for the selected channel with its ClearKey DRM
       player.configure({
         manifest: {
           dash: {
@@ -517,7 +630,7 @@
         },
         drm: {
           clearKeys: {
-            [DRM_KID]: DRM_KEY
+            [ch.kid]: ch.key
           },
           preferredKeySystems: ['org.w3.clearkey'],
           delayLicenseRequestUntilPlayed: false
@@ -528,32 +641,34 @@
         }
       });
 
-      player.addEventListener('error', (event) => {
-        console.error('Shaka Error:', event.detail);
-        spinner.style.display = 'none';
-      });
-
-      player.addEventListener('buffering', (event) => {
-        spinner.style.display = event.buffering ? 'block' : 'none';
-      });
-
-      player.addEventListener('adaptation', () => {
-        updateActiveTrackDisplay();
-      });
-
       try {
-        await player.load(MANIFEST_URL, null, 'application/dash+xml');
+        await player.load(ch.manifestUrl, null, 'application/dash+xml');
         spinner.style.display = 'none';
         buildQualityMenu();
         syncPlayState();
+        video.play().catch(e => console.warn(e));
       } catch (err) {
-        console.error('Manifest Load Failed:', err);
+        console.error(`Failed to load ${ch.name}:`, err);
         spinner.style.display = 'none';
       }
     }
 
     // -------------------------------------------------------------
-    // 2. Play / Pause / Mute Handlers
+    // 2. Channel Switcher
+    // -------------------------------------------------------------
+    async function switchChannel(channelKey) {
+      if (channelKey === activeChannelKey) return;
+      activeChannelKey = channelKey;
+
+      // Update Active Tab UI
+      document.querySelectorAll('.channel-tab').forEach(t => t.classList.remove('active'));
+      document.getElementById(`tab-${channelKey}`)?.classList.add('active');
+
+      await loadChannel(channelKey);
+    }
+
+    // -------------------------------------------------------------
+    // 3. Play / Pause / Mute Handlers
     // -------------------------------------------------------------
     function togglePlay() {
       if (video.paused) {
@@ -604,7 +719,7 @@
     }
 
     // -------------------------------------------------------------
-    // 3. Dynamic Quality Menu & Switching
+    // 4. Dynamic Quality Menu & Switching
     // -------------------------------------------------------------
     function buildQualityMenu() {
       if (!player) return;
@@ -612,7 +727,6 @@
         .filter(t => t.height && t.bandwidth)
         .sort((a, b) => b.height - a.height);
 
-      // De-duplicate by height (1080p, 720p, 540p, 360p)
       const uniqueQualities = [];
       const seen = new Set();
       for (const t of tracks) {
@@ -678,7 +792,7 @@
     }
 
     // -------------------------------------------------------------
-    // 4. Video Size & Aspect Ratio Adjustments
+    // 5. Video Size & Aspect Ratio Adjustments
     // -------------------------------------------------------------
     function setFitMode(mode, elem) {
       video.className = `fit-${mode}`;
@@ -707,7 +821,7 @@
     }
 
     // -------------------------------------------------------------
-    // 5. Fullscreen & Menu Popups
+    // 6. Fullscreen & Menu Popups
     // -------------------------------------------------------------
     function toggleFullscreen() {
       if (!document.fullscreenElement) {
@@ -733,13 +847,13 @@
     }
 
     document.addEventListener('click', (e) => {
-      if (!e.target.closest('.ctrl-btn') && !e.target.closest('.menu-popup')) {
+      if (!e.target.closest('.ctrl-btn') && !e.target.closest('.menu-popup') && !e.target.closest('.channel-tab')) {
         closeAllMenus();
       }
     });
 
     // -------------------------------------------------------------
-    // 6. Auto-Hide Controls on Inactivity
+    // 7. Auto-Hide Controls on Inactivity
     // -------------------------------------------------------------
     function resetControlsTimer() {
       playerContainer.classList.remove('hide-controls');
