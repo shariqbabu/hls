@@ -1,0 +1,15 @@
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-TARGETDURATION:3
+#EXTINF:2.950000,
+https://live.betadda.workers.dev/api/tg/stream?msg=13007&next=13006&next2=13009&next3=13010&next4=13008
+#EXTINF:1.966667,
+https://live.betadda.workers.dev/api/tg/stream?msg=13006&next=13009&next2=13010&next3=13008
+#EXTINF:1.966667,
+https://live.betadda.workers.dev/api/tg/stream?msg=13009&next=13010&next2=13008
+#EXTINF:1.966667,
+https://live.betadda.workers.dev/api/tg/stream?msg=13010&next=13008
+#EXTINF:1.200000,
+https://live.betadda.workers.dev/api/tg/stream?msg=13008
+#EXT-X-ENDLIST
