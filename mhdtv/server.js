@@ -13,6 +13,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
+// Read Supabase environment variables or use fallback defaults
 const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim();
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || "").trim();
 
@@ -75,7 +76,7 @@ async function extractChannel(channel) {
   const kid = kidMatch[1].trim();
   const keyVal = keyMatch[1].trim();
 
-  // 🚀 Construct FULL URL with clearkey for Supabase & ExoPlayer
+  // 🚀 Construct FULL URL with clearkey for Supabase & Mobile App ExoPlayer
   const fullStreamUrl = `${manifestUrl}?clearkey=${kid}:${keyVal}`;
 
   return {
@@ -94,14 +95,17 @@ async function extractChannel(channel) {
 }
 
 async function syncToSupabase(results) {
-  if (!SUPABASE_URL || !SUPABASE_KEY) return;
-  console.log('\n🗄️ Syncing FULL stream URLs to Supabase live_channels...');
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    console.log('⚠️ Supabase credentials missing, skipping database sync.');
+    return;
+  }
+  console.log('\n🗄️ Syncing FULL stream URLs with ?clearkey= to Supabase live_channels...');
 
   for (const item of results) {
     const payload = {
       id: item.supabaseId,
       title: item.name,
-      stream_url: item.fullStreamUrl,  // 🚀 Full URL with ?clearkey=KID:KEY
+      stream_url: item.fullStreamUrl,  // 🚀 Full ready URL with ?clearkey=KID:KEY
       cdn_url: item.fullStreamUrl,
       KID: `${item.kid}:${item.keyVal}`,
       referer: REFERER,
@@ -124,8 +128,8 @@ async function syncToSupabase(results) {
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        console.log(`  ✅ [Supabase] ${item.supabaseId} -> Saved Full Stream URL:`);
-        console.log(`     ${item.fullStreamUrl}`);
+        console.log(`  ✅ [Supabase] ${item.supabaseId} updated successfully:`);
+        console.log(`     URL: ${item.fullStreamUrl}`);
       } else {
         const err = await res.text();
         console.warn(`  ⚠️ [Supabase] ${item.supabaseId} error: ${err}`);
@@ -134,6 +138,18 @@ async function syncToSupabase(results) {
       console.warn(`  ⚠️ [Supabase] network error: ${e.message}`);
     }
   }
+}
+
+function findIndexHtml() {
+  const possiblePaths = [
+    path.join(process.cwd(), 'index.html'),
+    path.join(__dirname, '..', 'index.html'),
+    path.join(__dirname, 'index.html')
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 
 async function updateAllChannels() {
@@ -163,8 +179,9 @@ async function updateAllChannels() {
   await syncToSupabase(freshResults);
 
   // 2. Update index.html for Web Player
-  const htmlPath = path.join(process.cwd(), 'index.html');
-  if (fs.existsSync(htmlPath)) {
+  const htmlPath = findIndexHtml();
+  if (htmlPath) {
+    console.log(`\n📄 Updating index.html at: ${htmlPath}`);
     let htmlContent = fs.readFileSync(htmlPath, 'utf8');
     let hasChanges = false;
 
@@ -185,11 +202,15 @@ async function updateAllChannels() {
     if (hasChanges) {
       fs.writeFileSync(htmlPath, htmlContent, 'utf8');
       console.log('🎉 Successfully saved fresh credentials to index.html!');
+    } else {
+      console.log('ℹ️ index.html is already up-to-date.');
     }
+  } else {
+    console.log('ℹ️ index.html not found, skipped local file update.');
   }
 
   console.log('\n====================================================');
-  console.log('✨ All channels successfully updated with FULL clearkey URLs!');
+  console.log('✨ All channels successfully processed!');
   console.log('====================================================\n');
 }
 
