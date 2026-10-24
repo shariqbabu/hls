@@ -25,6 +25,9 @@ jobs:
           node-version: '20'
 
       - name: Run Key Extractor & HTML Updater
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           node mhdtv/server.js
 
