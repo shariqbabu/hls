@@ -1,0 +1,43 @@
+name: Auto mhdtv Update Key
+
+on:
+  schedule:
+    # Har 6 ghante mein auto-check karega
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # GitHub UI se 1-click manual run ke liye
+
+permissions:
+  contents: write
+
+jobs:
+  update-stream:
+    name: Check & Refresh Stream Keys
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run Key Extractor & HTML Updater
+        run: |
+          node server.js
+
+      - name: Commit & Push if Updated
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Fresh stream keys detected! Committing changes..."
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git add index.html
+            git commit -m "⚡ Auto-refresh live stream manifest & ClearKey DRM [skip ci]"
+            git push
+            echo "Successfully pushed fresh keys to repository!"
+          else
+            echo "No stream key changes detected. Repository is already up to date."
+          fi
