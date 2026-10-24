@@ -1,0 +1,6 @@
+name = "mhdtv"
+main = "mhdtv/server.js"
+compatibility_date = "2025-01-01"
+
+[observability]
+enabled = true
