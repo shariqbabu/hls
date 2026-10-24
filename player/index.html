@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SonyLiv Hindi - Shaka Player Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.16.30/dist/shaka-player.compiled.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      background: #0d0d15;
+      color: #fff;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    h2 { margin: 10px 0; }
+    #videoContainer {
+      width: 90%;
+      max-width: 960px;
+      aspect-ratio: 16/9;
+      background: #000;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.8);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+    }
+    .info {
+      margin-top: 15px;
+      background: #181824;
+      padding: 12px 20px;
+      border-radius: 6px;
+      font-size: 13px;
+      max-width: 920px;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <h2>🏏 SonyLiv Hindi - Live Stream (ClearKey DRM)</h2>
+  <div id="videoContainer">
+    <video id="video" controls autoplay playsinline></video>
+  </div>
+  <div class="info">
+    <b>Manifest:</b> https://otte.live.fly.ww.aiv-cdn.net/fra-nitro/live/clients/dash/enc/mmvlg151u6/out/v1/ab9d1f193c094ee8a9305f983a716f35/cenc.mpd<br>
+    <b>ClearKey:</b> 18e6af4a0daf2a1fdfbdc5b541520c88 : ca0b64b84edb4f20eb1e135ff03db4f7
+  </div>
+
+  <script>
+    async function initApp() {
+      shaka.polyfill.installAll();
+      if (!shaka.Player.isBrowserSupported()) {
+        console.error('Browser not supported!');
+        return;
+      }
+
+      const video = document.getElementById('video');
+      const player = new shaka.Player(video);
+
+      // Configure ClearKey DRM
+      player.configure({
+        drm: {
+          clearKeys: {
+            '18e6af4a0daf2a1fdfbdc5b541520c88': 'ca0b64b84edb4f20eb1e135ff03db4f7'
+          }
+        }
+      });
+
+      player.addEventListener('error', (e) => {
+        console.error('Player error:', e.detail);
+      });
+
+      try {
+        const manifestUrl = 'https://otte.live.fly.ww.aiv-cdn.net/fra-nitro/live/clients/dash/enc/mmvlg151u6/out/v1/ab9d1f193c094ee8a9305f983a716f35/cenc.mpd';
+        await player.load(manifestUrl);
+        console.log('Stream loaded successfully!');
+      } catch (err) {
+        console.error('Load failed:', err);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', initApp);
+  </script>
+</body>
+</html>
