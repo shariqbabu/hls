@@ -1,25 +1,23 @@
 /**
- * ⚡ Live Stream Auto-Updater for GitHub Actions & Local Runner
- * Fetches fresh live DASH manifest URL & ClearKey DRM from Touchcric / MHDTV
- * and updates index.html automatically.
+ * ⚡ Multi-Channel Live Stream Auto-Updater for GitHub Actions
+ * Fetches fresh DASH manifest URLs & ClearKey DRM for:
+ *  - SonyLiv Hindi HD (ID: 348)
+ *  - SonyLiv English HD (ID: 347)
+ *  - FanCode HD (ID: 343)
+ * And updates index.html automatically.
  */
 
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-// Target channel ID (348 = SonyLiv Hindi HD)
-const CHANNEL_ID = process.env.CHANNEL_ID || "348";
-const PLAYER_ENDPOINT = `https://api.touchcric.vip/drm/player.php?id=${CHANNEL_ID}`;
-const REFERER = "https://live.mhdtv.online/";
-
-// Find index.html or sonyliv_shaka_test.html
-const TARGET_HTML_PATHS = [
-  path.join(__dirname, 'player/index.html'),
-  path.join(__dirname, 'player/.html'),
-  path.join(process.cwd(), 'index.html'),
-  path.join(process.cwd(), 'sonyliv.html')
+const CHANNELS_CONFIG = [
+  { key: 'sonyliv_hindi', id: '348', name: 'SonyLiv Hindi HD' },
+  { key: 'sonyliv_eng',   id: '347', name: 'SonyLiv English HD' },
+  { key: 'fancode',       id: '343', name: 'FanCode HD' }
 ];
+
+const REFERER = "https://live.mhdtv.online/";
 
 function fetchWithHeaders(url, referer) {
   return new Promise((resolve, reject) => {
@@ -42,7 +40,7 @@ function fetchWithHeaders(url, referer) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(data);
         } else {
-          reject(new Error(`HTTP ${res.statusCode} from endpoint: ${data.slice(0, 100)}`));
+          reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 100)}`));
         }
       });
     });
@@ -56,80 +54,85 @@ function fetchWithHeaders(url, referer) {
   });
 }
 
-async function updatePlayer() {
-  console.log('====================================================');
-  console.log(`📡 Checking latest stream for Channel ID: ${CHANNEL_ID}...`);
-  console.log(`Endpoint: ${PLAYER_ENDPOINT}`);
-  console.log('====================================================');
+async function extractChannel(channel) {
+  const url = `https://api.touchcric.vip/drm/player.php?id=${channel.id}`;
+  const html = await fetchWithHeaders(url, REFERER);
 
-  let html;
-  try {
-    html = await fetchWithHeaders(PLAYER_ENDPOINT, REFERER);
-  } catch (err) {
-    console.error(`❌ Failed to fetch stream from endpoint:`, err.message);
-    process.exit(1);
-  }
-
-  // Extract Manifest URL and ClearKey
   const manifestMatch = html.match(/const MANIFEST_URL\s*=\s*"([^"]+)"/i);
   const kidMatch = html.match(/const DRM_KID\s*=\s*"([^"]+)"/i);
   const keyMatch = html.match(/const DRM_KEY\s*=\s*"([^"]+)"/i);
 
   if (!manifestMatch || !kidMatch || !keyMatch) {
-    console.error('❌ Could not parse MANIFEST_URL or DRM_KID / DRM_KEY from response!');
+    throw new Error(`Failed to extract credentials for ${channel.name} (ID: ${channel.id})`);
+  }
+
+  return {
+    key: channel.key,
+    id: channel.id,
+    name: channel.name,
+    manifestUrl: manifestMatch[1].trim(),
+    kid: kidMatch[1].trim(),
+    keyVal: keyMatch[1].trim()
+  };
+}
+
+async function updateAllChannels() {
+  console.log('====================================================');
+  console.log('📡 Fetching latest stream credentials for all channels...');
+  console.log('====================================================');
+
+  const freshResults = [];
+  for (const ch of CHANNELS_CONFIG) {
+    try {
+      const res = await extractChannel(ch);
+      freshResults.push(res);
+      console.log(`✅ [${res.name}] Manifest & ClearKey fetched successfully!`);
+      console.log(`   ClearKey: ${res.kid}:${res.keyVal}`);
+    } catch (e) {
+      console.warn(`⚠️ [${ch.name}] Extraction error: ${e.message}`);
+    }
+  }
+
+  if (freshResults.length === 0) {
+    console.error('❌ Could not fetch any channel credentials!');
     process.exit(1);
   }
 
-  const freshManifest = manifestMatch[1].trim();
-  const freshKid = kidMatch[1].trim();
-  const freshKey = keyMatch[1].trim();
-
-  console.log(`\n✅ Fresh Stream Extracted:`);
-  console.log(`   Manifest URL: ${freshManifest}`);
-  console.log(`   DRM KID     : ${freshKid}`);
-  console.log(`   DRM Key     : ${freshKey}`);
-  console.log(`   ClearKey    : ${freshKid}:${freshKey}\n`);
-
-  // Locate target HTML file
-  let htmlPath = TARGET_HTML_PATHS.find(p => fs.existsSync(p));
-  if (!htmlPath) {
-    // Default to index.html in current folder
-    htmlPath = path.join(process.cwd(), 'index.html');
-  }
-
+  const htmlPath = path.join(process.cwd(), 'index.html');
   if (!fs.existsSync(htmlPath)) {
-    console.warn(`⚠️ Target HTML file not found at ${htmlPath}. Creating default index.html.`);
-    return;
+    console.error(`❌ index.html not found at: ${htmlPath}`);
+    process.exit(1);
   }
 
-  let currentContent = fs.readFileSync(htmlPath, 'utf8');
+  let htmlContent = fs.readFileSync(htmlPath, 'utf8');
+  let hasChanges = false;
 
-  // Check if update is needed
-  const oldManifestMatch = currentContent.match(/const MANIFEST_URL\s*=\s*"([^"]+)"/i);
-  const oldKidMatch = currentContent.match(/const DRM_KID\s*=\s*"([^"]+)"/i);
-  const oldKeyMatch = currentContent.match(/const DRM_KEY\s*=\s*"([^"]+)"/i);
+  for (const fresh of freshResults) {
+    // Regex targeting specific channel object inside CHANNELS map
+    const blockRegex = new RegExp(`(${fresh.key}:\\s*\\{[\\s\\S]*?manifestUrl:\\s*)"[^"]*"([\\s\\S]*?kid:\\s*)"[^"]*"([\\s\\S]*?key:\\s*)"[^"]*"`, 'i');
 
-  const oldManifest = oldManifestMatch ? oldManifestMatch[1] : '';
-  const oldKid = oldKidMatch ? oldKidMatch[1] : '';
-  const oldKey = oldKeyMatch ? oldKeyMatch[1] : '';
-
-  if (oldManifest === freshManifest && oldKid === freshKid && oldKey === freshKey) {
-    console.log(`✨ Player is already 100% up to date! No changes needed.`);
-    return;
+    const match = htmlContent.match(blockRegex);
+    if (match) {
+      const updatedBlock = `${match[1]}"${fresh.manifestUrl}"${match[2]}"${fresh.kid}"${match[3]}"${fresh.keyVal}"`;
+      if (match[0] !== updatedBlock) {
+        hasChanges = true;
+        htmlContent = htmlContent.replace(blockRegex, updatedBlock);
+        console.log(`🔄 Updated ${fresh.name} credentials in index.html`);
+      } else {
+        console.log(`✨ ${fresh.name} is already up to date.`);
+      }
+    }
   }
 
-  console.log(`🔄 Differences detected! Updating ${path.basename(htmlPath)}...`);
-
-  let updatedContent = currentContent
-    .replace(/const MANIFEST_URL\s*=\s*"[^"]*"/g, `const MANIFEST_URL = "${freshManifest}"`)
-    .replace(/const DRM_KID\s*=\s*"[^"]*"/g, `const DRM_KID = "${freshKid}"`)
-    .replace(/const DRM_KEY\s*=\s*"[^"]*"/g, `const DRM_KEY = "${freshKey}"`);
-
-  fs.writeFileSync(htmlPath, updatedContent, 'utf8');
-  console.log(`🎉 Successfully updated ${path.basename(htmlPath)} with fresh stream credentials!`);
+  if (hasChanges) {
+    fs.writeFileSync(htmlPath, htmlContent, 'utf8');
+    console.log('\n🎉 Successfully updated index.html with fresh credentials for all channels!');
+  } else {
+    console.log('\n✨ All channels in index.html are already 100% up to date!');
+  }
 }
 
-updatePlayer().catch(err => {
+updateAllChannels().catch(err => {
   console.error('Fatal error:', err);
   process.exit(1);
 });
