@@ -121,6 +121,26 @@
           "playback": {
             "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/10/master.m3u8",
             "format": "hls"
+          },
+          {
+          "episode_number": 11,
+          "title": "India's Got Latent — Episode 10",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/11/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/11/master.m3u8",
+            "format": "hls"
+          },
+          {
+          "episode_number": 12,
+          "title": "India's Got Latent — Episode 10",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/12/poster.jpg",
+          "plot": "",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/12/master.m3u8",
+            "format": "hls"
           }
         }
       ]
