@@ -88,6 +88,7 @@ def parse_local_m3u8(m3u8_path: Path):
 
 DEFAULT_WORKER_POOL = [
     "https://vibestream.betadda.workers.dev",
+    "https://live.betadda.workers.dev",
     "https://cdn.clineflix-73f.workers.dev",
     "https://stream-cdn.flow04624.workers.dev",
     "https://nexplay.betadda.workers.dev",
