@@ -86,106 +86,13 @@ def parse_local_m3u8(m3u8_path: Path):
     return target_duration, segment_durations
 
 
-DEFAULT_WORKER_POOL = [
-    "https://vibestream.dpdns.org",
-    "https://live-cdn.clineflix-e0d.workers.dev",
-    "https://live-cdn.clineflix-73f.workers.dev",
-    "https://start.betadda.workers.dev",
-    "https://ig.betadda.workers.dev",
-    "https://stream.clineflix-e0d.workers.dev",
-    "https://live-cdn-ott.clineflix-e0d.workers.dev",
-    "https://live.clineflix-73f.workers.dev",
-    "https://stream.clineflix-73f.workers.dev",
-    "https://cdn-ott.clineflix-73f.workers.dev",
-    "https://cdn.clineflix-73f.workers.dev",
-    "https://cineflix.betadda.workers.dev",
-    "https://cineflix.shrqbabu016.workers.dev",
-    "https://cineflix-cdn.shrqbabu016.workers.dev",
-    "https://live-cdn.shrqbabu016.workers.dev",
-    "https://stream-cdn.shrqbabu016.workers.dev",
-    "https://ott-cdn.shrqbabu016.workers.dev",
-    "https://cineflix-hls.shrqbabu016.workers.dev",
-    "https://cineflix-ott.shariqbabu134.workers.dev",
-    "https://cineflix.shariqbabu134.workers.dev",
-    "https://cdn-live.shariqbabu134.workers.dev",
-    "https://bot.shariqbabu134.workers.dev",
-    "https://mhdtv.shariqbabu134.workers.dev",
-    "https://proxy.shariqbabu134.workers.dev",
-    "https://router.gemini-free.workers.dev",
-    "https://cdn-cine.gemini-free.workers.dev",
-    "https://stream-ott.gemini-free.workers.dev",
-    "https://cineflix.gemini-free.workers.dev",
-    "https://live-cdn.shrq.workers.dev",
-    "https://cdn-live.shrq.workers.dev",
-    "https://cdn-ott.shrq.workers.dev",
-    "https://cineflix.shrq.workers.dev",
-    "https://stream.cineflix-49a.workers.dev",
-    "https://cdnlive.vibestream.workers.dev",
-    "https://cdnlive2.vibestream.workers.dev",
-    "https://cdnlive3.vibestream.workers.dev",
-    "https://cdnlive4.vibestream.workers.dev",
-    "https://cdnlive5.vibestream.workers.dev",
-    "https://cdnlive6.vibestream.workers.dev",
-    "https://cdnlive7.vibestream.workers.dev",
-    "https://cdnlive8.vibestream.workers.dev",
-    "https://cdnlive9.vibestream.workers.dev",
-    "https://cdnlive10.vibestream.workers.dev",
-    "https://cdnlive11.vibestream01.workers.dev",
-    "https://cdnlive12.vibestream01.workers.dev",
-    "https://cdnlive13.vibestream01.workers.dev",
-    "https://cdnlive14.vibestream01.workers.dev",
-    "https://cdnlive15.vibestream01.workers.dev",
-    "https://cdnlive16.vibestream01.workers.dev",
-    "https://cdnlive17.vibestream01.workers.dev",
-    "https://cdnlive18.vibestream01.workers.dev",
-    "https://cdnlive19.vibestream01.workers.dev",
-    "https://cdnlive20.vibestream01.workers.dev",
-    "https://vibestream.betadda.workers.dev",
-    "https://live.betadda.workers.dev",
-    "https://nexplay.betadda.workers.dev",
-    "https://cineflix-core.betadda.workers.dev",
-    "https://cdnlive21.vibestream02.workers.dev",
-    "https://cdnlive22.vibestream02.workers.dev",
-    "https://cdnlive23.vibestream02.workers.dev",
-    "https://cdnlive24.vibestream02.workers.dev",
-    "https://cdnlive25.vibestream02.workers.dev",
-    "https://cdnlive26.vibestream02.workers.dev",
-    "https://cdnlive27.vibestream02.workers.dev",
-    "https://cdnlive28.vibestream02.workers.dev",
-    "https://cdnlive29.vibestream02.workers.dev",
-    "https://cdnlive30.vibestream02.workers.dev",
-    "https://stream-cdn.flow04624.workers.dev",
-    "https://live-cdn.flow04624.workers.dev",
-    "https://cdn-cineflix.flow04624.workers.dev",
-    "https://cineflix-ott.flow04624.workers.dev",
-    "https://cineflix.flow04624.workers.dev",
-]
-
-
-def resolve_worker_pool(raw_worker_val: str = None) -> list:
-    pool_raw = os.getenv("WORKER_POOL") or os.getenv("WORKERS_POOL") or raw_worker_val
-    if pool_raw and "," in pool_raw:
-        pool = [w.strip().rstrip("/") for w in pool_raw.split(",") if w.strip()]
-    elif pool_raw and pool_raw.startswith("http") and not pool_raw.endswith("/api/tg/stream") and "live.betadda.workers.dev" not in pool_raw:
-        pool = [pool_raw.strip().rstrip("/")]
-    else:
-        pool = DEFAULT_WORKER_POOL
-
-    clean_pool = []
-    for w in pool:
-        base = w.rstrip("/")
-        if not base.endswith("/api/tg/stream"):
-            if base.endswith("/api/tg"):
-                base += "/stream"
-            elif "/api/tg" not in base:
-                base += "/api/tg/stream"
-        clean_pool.append(base)
-    return clean_pool if clean_pool else [DEFAULT_WORKER_POOL[0] + "/api/tg/stream"]
-
-
-def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, segment_durations: dict, prefetch_count: int = 5, batch_size: int = 5) -> str:
-    pool = resolve_worker_pool(worker_url)
-    pool_len = len(pool)
+def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, segment_durations: dict, prefetch_count: int = 5) -> str:
+    worker_base = worker_url.strip().rstrip("/")
+    if not worker_base.endswith("/api/tg/stream"):
+        if worker_base.endswith("/api/tg"):
+            worker_base += "/stream"
+        elif "/api/tg" not in worker_base:
+            worker_base += "/api/tg/stream"
 
     sorted_fnames = sorted(mapping.keys())
     msg_ids = [str(mapping[fname]["message_id"]) for fname in sorted_fnames]
@@ -200,11 +107,6 @@ def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, s
     for n in range(len(sorted_fnames)):
         fname = sorted_fnames[n]
         dur = segment_durations.get(fname, "6.000000")
-
-        # Batches of 5 chunks per worker keeps sequential prefetch (next1..next5) on the same edge worker
-        # while distributing load across the 40+ worker pool!
-        worker_idx = (n // batch_size) % pool_len if batch_size > 0 else (n % pool_len)
-        worker_base = pool[worker_idx]
 
         params = [f"msg={msg_ids[n]}"]
         for offset in range(1, prefetch_count + 1):
