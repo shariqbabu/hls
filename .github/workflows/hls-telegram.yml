@@ -27,7 +27,9 @@ jobs:
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_SESSION: ${{ secrets.TG_SESSION }}
       TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
-      WORKER_URL: "https://live.betadda.workers.dev/api/tg/stream"
+      WORKER_URLS: ${{ secrets.WORKER_URLS }}
+      WORKER_COUNT: "72"
+      WORKER_PREFETCH_COUNT: "5"
       TG_UPLOAD_CONCURRENCY: "8"
       TG_UPLOAD_TIMEOUT: "900"
 
@@ -71,6 +73,22 @@ jobs:
           rm -rf /tmp/hls_pipeline
           mkdir -p /tmp/hls_pipeline/hls
           df -h /tmp
+
+      - name: Validate 72 Worker Pool
+        env:
+          WORKER_URLS: ${{ secrets.WORKER_URLS }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          urls = [x.strip() for x in re.split(r"[\r\n,]+", os.getenv("WORKER_URLS", "")) if x.strip()]
+          urls = list(dict.fromkeys(urls))
+          if len(urls) != 72:
+              raise SystemExit(f"Expected 72 unique Worker URLs, found {len(urls)}")
+          if any(not u.startswith(("https://", "http://")) for u in urls):
+              raise SystemExit("Every Worker URL must start with http:// or https://")
+          print("Validated 72 unique Worker URLs.")
+          PY
 
       - name: Check Telegram Configuration
         run: |
