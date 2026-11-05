@@ -68,7 +68,9 @@ function isProbablyDirectVideoContentType(contentType) {
     normalized.includes("quicktime") ||
     normalized.includes("matroska") ||
     normalized.includes("hevc") ||
-    normalized.includes("octet-stream")
+    normalized.includes("octet-stream") ||
+    normalized.includes("application/octet-stream") ||
+    normalized.includes("application/mp4")
   );
 }
 
@@ -100,10 +102,14 @@ async function validateDownloadedVideo(inputFile) {
   const headers = await fs.readFile(headersPath, "utf8");
   const contentTypeMatch = headers.match(/content-type:\s*([^\r\n]+)/i);
 
-  if (contentTypeMatch && !isProbablyDirectVideoContentType(contentTypeMatch[1])) {
-    throw new Error(
-      `VIDEO_URL responded with Content-Type "${contentTypeMatch[1]}" instead of a video file. Use a direct media URL.`
-    );
+  if (contentTypeMatch) {
+    const detectedType = contentTypeMatch[1].trim();
+
+    if (!isProbablyDirectVideoContentType(detectedType)) {
+      console.warn(
+        `Warning: VIDEO_URL responded with Content-Type "${detectedType}". Continuing to validate the actual downloaded file because some CDNs or direct media endpoints do not expose a video Content-Type on HEAD requests.`
+      );
+    }
   }
 
   const probe = spawnSync(
