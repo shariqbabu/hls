@@ -1,5 +1,5 @@
 
-name: Convert Video to HLS and Push to Hugging Face
+name: Convert Push to Hugging Face
 
 on:
   workflow_dispatch:
