@@ -1,4 +1,3 @@
-
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -59,6 +58,75 @@ function validateOutputDir(value) {
   return normalized;
 }
 
+function isProbablyDirectVideoContentType(contentType) {
+  if (!contentType) return true;
+
+  const normalized = contentType.toLowerCase();
+  return (
+    normalized.startsWith("video/") ||
+    normalized.includes("mp4") ||
+    normalized.includes("quicktime") ||
+    normalized.includes("matroska") ||
+    normalized.includes("hevc") ||
+    normalized.includes("octet-stream")
+  );
+}
+
+async function validateDownloadedVideo(inputFile) {
+  const headersPath = path.join(WORK_DIR, "curl-headers.txt");
+
+  const headerResult = spawnSync(
+    "curl",
+    [
+      "--silent",
+      "--show-error",
+      "--location",
+      "--head",
+      "--output",
+      "/dev/null",
+      "--dump-header",
+      headersPath,
+      VIDEO_URL
+    ],
+    { stdio: "inherit" }
+  );
+
+  if (headerResult.status !== 0) {
+    throw new Error(
+      "Unable to inspect the remote video URL. Check that VIDEO_URL is reachable and points to a direct media file."
+    );
+  }
+
+  const headers = await fs.readFile(headersPath, "utf8");
+  const contentTypeMatch = headers.match(/content-type:\s*([^\r\n]+)/i);
+
+  if (contentTypeMatch && !isProbablyDirectVideoContentType(contentTypeMatch[1])) {
+    throw new Error(
+      `VIDEO_URL responded with Content-Type "${contentTypeMatch[1]}" instead of a video file. Use a direct media URL.`
+    );
+  }
+
+  const probe = spawnSync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=format_name",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      inputFile
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] }
+  );
+
+  if (probe.status !== 0 || !probe.stdout.toString().trim()) {
+    throw new Error(
+      "Downloaded file is not a valid video. Check that VIDEO_URL points directly to an MP4, MKV, or HEVC file and not an HTML page or redirect page."
+    );
+  }
+}
+
 async function main() {
   if (!VIDEO_URL || !HF_TOKEN || !HF_REPO_ID) {
     throw new Error(
@@ -100,11 +168,11 @@ async function main() {
   const inputFile = path.join(INPUT_DIR, "source-video");
 
   try {
-    // 1. Download video to temporary storage
     console.log("Downloading video...");
 
     const curlArgs = [
       "--fail",
+      "--show-error",
       "--location",
       "--retry", "3",
       "--retry-delay", "2",
@@ -123,34 +191,32 @@ async function main() {
 
     console.log(`Downloaded ${inputStat.size} bytes`);
 
-    // 2. Convert to HLS, maximum 1080p, 10-second segments
+    await validateDownloadedVideo(inputFile);
+
+    console.log("Converting video to HLS...");
     const ffmpegArgs = ["-hide_banner", "-y"];
 
     if (format === "hevc") {
       ffmpegArgs.push("-f", "hevc");
     }
 
- 
-ffmpegArgs.push(
-  "-i", inputFile,
-  "-map", "0:v:0",
-  "-map", "0:a:0?",
-  "-c:v", "copy",
-  "-c:a", "aac",
-  "-b:a", "128k",
-  "-f", "hls",
-  "-hls_time", "10",
-  "-hls_playlist_type", "vod",
-  "-hls_segment_filename",
-  path.join(OUTPUT_PATH, "segment_%05d.ts"),
-  path.join(OUTPUT_PATH, "index.m3u8")
-);
+    ffmpegArgs.push(
+      "-i", inputFile,
+      "-map", "0:v:0",
+      "-map", "0:a:0?",
+      "-c:v", "copy",
+      "-c:a", "aac",
+      "-b:a", "128k",
+      "-f", "hls",
+      "-hls_time", "10",
+      "-hls_playlist_type", "vod",
+      "-hls_segment_filename",
+      path.join(OUTPUT_PATH, "segment_%05d.ts"),
+      path.join(OUTPUT_PATH, "index.m3u8")
+    );
 
-
-    console.log("Converting video to HLS...");
     run("ffmpeg", ffmpegArgs);
 
-    // 3. Validate playlist and segments
     const playlistPath = path.join(OUTPUT_PATH, "index.m3u8");
     const playlist = await fs.readFile(playlistPath, "utf8");
 
@@ -167,7 +233,6 @@ ffmpegArgs.push(
 
     console.log(`Generated ${segments.length} segments`);
 
-    // 4. Clone Hugging Face dataset using temporary Git credentials
     const repoDir = path.join(WORK_DIR, "hf-repository");
     const repoUrl = `https://huggingface.co/datasets/${repoId}`;
 
@@ -194,7 +259,6 @@ ffmpegArgs.push(
       env: gitEnv
     });
 
-    // 5. Copy generated files to the selected repository folder
     const uploadPath = path.resolve(repoDir, outputDir);
     const relativeUpload = path.relative(repoDir, uploadPath);
 
@@ -258,7 +322,6 @@ ffmpegArgs.push(
     console.log(`Playlist path: ${outputDir}/index.m3u8`);
 
   } finally {
-    // 6. Remove downloaded video, generated HLS and cloned repository
     await fs.rm(WORK_DIR, {
       recursive: true,
       force: true
