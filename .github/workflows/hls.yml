@@ -1,17 +1,23 @@
 
-name: Convert Push to Hugging Face
+name: Convert Video to Hugging Face HLS
 
 on:
   workflow_dispatch:
     inputs:
-      output_dir:
-        description: "Hugging Face output folder"
+      hf_path:
+        description: "Hugging Face output folder path"
         required: true
         type: string
         default: hls
 
+      video_name:
+        description: "Final video folder name"
+        required: true
+        type: string
+        default: my-video
+
       video_url:
-        description: "Direct MP4, MKV, or HEVC video URL"
+        description: "Direct MP4, MKV or HEVC video URL"
         required: true
         type: string
 
@@ -25,6 +31,12 @@ on:
           - mkv
           - hevc
         default: auto
+
+      segment_duration:
+        description: "HLS segment duration in seconds"
+        required: true
+        type: number
+        default: 6
 
 permissions:
   contents: read
@@ -46,27 +58,61 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
-      - name: Install FFmpeg and Git
+      - name: Install FFmpeg, Git and Git LFS
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg git curl
+          sudo apt-get install -y ffmpeg git git-lfs curl
+          git lfs install
 
       - name: Install Node dependencies
-        run: npm install --package-lock-only && npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          fi
 
-      - name: Download, convert, upload, and clean up
+      - name: Validate workflow inputs
         env:
-          OUTPUT_DIR: ${{ inputs.output_dir }}
+          HF_PATH: ${{ inputs.hf_path }}
+          VIDEO_NAME: ${{ inputs.video_name }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          SEGMENT_DURATION: ${{ inputs.segment_duration }}
+        run: |
+          set -e
+
+          test -n "$HF_PATH"
+          test -n "$VIDEO_NAME"
+          test -n "$VIDEO_URL"
+
+          if ! [[ "$SEGMENT_DURATION" =~ ^[0-9]+$ ]]; then
+            echo "Invalid segment duration"
+            exit 1
+          fi
+
+          if [ "$SEGMENT_DURATION" -lt 1 ] || [ "$SEGMENT_DURATION" -gt 60 ]; then
+            echo "Segment duration must be between 1 and 60 seconds"
+            exit 1
+          fi
+
+          echo "All inputs validated."
+
+      - name: Download, convert and upload to Hugging Face
+        env:
+          OUTPUT_DIR: ${{ inputs.hf_path }}
+          VIDEO_NAME: ${{ inputs.video_name }}
           VIDEO_URL: ${{ inputs.video_url }}
           INPUT_FORMAT: ${{ inputs.input_format }}
+          SEGMENT_DURATION: ${{ inputs.segment_duration }}
+
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
           HF_REPO_TYPE: dataset
+
         run: node index.js
 
-      - name: Cleanup even if a previous step fails
+      - name: Cleanup temporary files
         if: always()
         run: |
           rm -rf temp-work hls-output
