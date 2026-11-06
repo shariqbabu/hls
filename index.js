@@ -1,11 +1,14 @@
+
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const {
   VIDEO_URL,
+  VIDEO_NAME = "my-video",
   INPUT_FORMAT = "auto",
   OUTPUT_DIR = "hls",
+  SEGMENT_DURATION = "6",
   HF_TOKEN,
   HF_REPO_ID,
   HF_REPO_TYPE = "dataset"
@@ -13,7 +16,7 @@ const {
 
 const WORK_DIR = path.resolve("temp-work");
 const INPUT_DIR = path.join(WORK_DIR, "input");
-const OUTPUT_PATH = path.resolve("hls-output");
+const OUTPUT_PATH = path.resolve("nexplay");
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -34,9 +37,7 @@ function run(command, args, options = {}) {
 
 function validateRepoId(value) {
   if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(value || "")) {
-    throw new Error(
-      "HF_REPO_ID must be username/repository-name"
-    );
+    throw new Error("HF_REPO_ID must be username/repository-name");
   }
 }
 
@@ -50,93 +51,96 @@ function validateOutputDir(value) {
       part => !part || part === "." || part === ".."
     )
   ) {
-    throw new Error(
-      "Invalid OUTPUT_DIR. Example: movies/cricket"
-    );
+    throw new Error("Invalid OUTPUT_DIR. Example: movies/action");
   }
 
   return normalized;
 }
 
-function isProbablyDirectVideoContentType(contentType) {
-  if (!contentType) return true;
+function validateVideoName(value) {
+  const name = (value || "").trim();
 
-  const normalized = contentType.toLowerCase();
-  return (
-    normalized.startsWith("video/") ||
-    normalized.includes("mp4") ||
-    normalized.includes("quicktime") ||
-    normalized.includes("matroska") ||
-    normalized.includes("hevc") ||
-    normalized.includes("octet-stream") ||
-    normalized.includes("application/octet-stream") ||
-    normalized.includes("application/mp4")
-  );
+  if (
+    !name ||
+    name === "." ||
+    name === ".." ||
+    /[/\\<>:"|?*\x00-\x1f]/.test(name)
+  ) {
+    throw new Error(
+      "Invalid VIDEO_NAME. Use letters, numbers, spaces, - or _."
+    );
+  }
+
+  return name;
 }
 
-async function validateDownloadedVideo(inputFile) {
-  const headersPath = path.join(WORK_DIR, "curl-headers.txt");
+function getSegmentDuration(value) {
+  const duration = Number(value);
 
-  const headerResult = spawnSync(
-    "curl",
-    [
-      "--silent",
-      "--show-error",
-      "--location",
-      "--head",
-      "--output",
-      "/dev/null",
-      "--dump-header",
-      headersPath,
-      VIDEO_URL
-    ],
-    { stdio: "inherit" }
-  );
-
-  if (headerResult.status !== 0) {
+  if (
+    !Number.isFinite(duration) ||
+    duration <= 0 ||
+    duration > 60
+  ) {
     throw new Error(
-      "Unable to inspect the remote video URL. Check that VIDEO_URL is reachable and points to a direct media file."
+      "SEGMENT_DURATION must be greater than 0 and at most 60 seconds."
     );
   }
 
-  const headers = await fs.readFile(headersPath, "utf8");
-  const contentTypeMatch = headers.match(/content-type:\s*([^\r\n]+)/i);
+  return String(duration);
+}
 
-  if (contentTypeMatch) {
-    const detectedType = contentTypeMatch[1].trim();
+function getVideoInfo(inputFile, format) {
+  const args = [
+    "-v", "error",
+    "-show_entries",
+    "format=format_name:stream=codec_type,codec_name",
+    "-of", "json"
+  ];
 
-    if (!isProbablyDirectVideoContentType(detectedType)) {
-      console.warn(
-        `Warning: VIDEO_URL responded with Content-Type "${detectedType}". Continuing to validate the actual downloaded file because some CDNs or direct media endpoints do not expose a video Content-Type on HEAD requests.`
-      );
-    }
+  if (format === "hevc") {
+    args.push("-f", "hevc");
   }
 
-  const probe = spawnSync(
-    "ffprobe",
-    [
-      "-v",
-      "error",
-      "-show_entries",
-      "format=format_name",
-      "-of",
-      "default=noprint_wrappers=1:nokey=1",
-      inputFile
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] }
-  );
+  args.push(inputFile);
 
-  if (probe.status !== 0 || !probe.stdout.toString().trim()) {
+  const result = spawnSync("ffprobe", args, {
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024
+  });
+
+  if (result.status !== 0 || !result.stdout) {
     throw new Error(
-      "Downloaded file is not a valid video. Check that VIDEO_URL points directly to an MP4, MKV, or HEVC file and not an HTML page or redirect page."
+      "Invalid video file. URL must point to a direct video file."
     );
   }
+
+  const info = JSON.parse(result.stdout);
+  const video = info.streams?.find(
+    stream => stream.codec_type === "video"
+  );
+
+  if (!video) {
+    throw new Error("No video stream found in downloaded file.");
+  }
+
+  return {
+    codec: video.codec_name,
+    hasAudio: info.streams.some(
+      stream => stream.codec_type === "audio"
+    ),
+    format: info.format?.format_name || "unknown"
+  };
+}
+
+function createAskpass() {
+  return path.join(WORK_DIR, "git-askpass.sh");
 }
 
 async function main() {
   if (!VIDEO_URL || !HF_TOKEN || !HF_REPO_ID) {
     throw new Error(
-      "Required: VIDEO_URL, HF_TOKEN, HF_REPO_ID"
+      "Required: VIDEO_URL, HF_TOKEN and HF_REPO_ID"
     );
   }
 
@@ -146,24 +150,24 @@ async function main() {
   const format = INPUT_FORMAT.toLowerCase();
 
   if (!["auto", "mp4", "mkv", "hevc"].includes(format)) {
-    throw new Error(
-      "INPUT_FORMAT must be auto, mp4, mkv, or hevc"
-    );
+    throw new Error("Invalid INPUT_FORMAT.");
   }
 
   if (HF_REPO_TYPE !== "dataset") {
-    throw new Error(
-      "This workflow expects a Hugging Face dataset repository"
-    );
+    throw new Error("Only Hugging Face dataset repositories are supported.");
   }
 
   const outputDir = validateOutputDir(OUTPUT_DIR);
+  const videoName = validateVideoName(VIDEO_NAME);
+  const segmentDuration = getSegmentDuration(SEGMENT_DURATION);
 
   const url = new URL(VIDEO_URL);
 
   if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("VIDEO_URL must be HTTP or HTTPS");
+    throw new Error("VIDEO_URL must use HTTP or HTTPS.");
   }
+
+  const repoUrl = `https://huggingface.co/datasets/${repoId}`;
 
   await fs.rm(WORK_DIR, { recursive: true, force: true });
   await fs.rm(OUTPUT_PATH, { recursive: true, force: true });
@@ -171,12 +175,16 @@ async function main() {
   await fs.mkdir(INPUT_DIR, { recursive: true });
   await fs.mkdir(OUTPUT_PATH, { recursive: true });
 
-  const inputFile = path.join(INPUT_DIR, "source-video");
-
   try {
-    console.log("Downloading video...");
+    // STEP 1: DOWNLOAD
 
-    const curlArgs = [
+    const inputFile = path.join(INPUT_DIR, "source-video");
+
+    console.log("==================================");
+    console.log("STEP 1: Downloading video");
+    console.log("==================================");
+
+    run("curl", [
       "--fail",
       "--show-error",
       "--location",
@@ -185,68 +193,128 @@ async function main() {
       "--connect-timeout", "30",
       "--output", inputFile,
       VIDEO_URL
-    ];
-
-    run("curl", curlArgs);
+    ]);
 
     const inputStat = await fs.stat(inputFile);
 
     if (!inputStat.size) {
-      throw new Error("Downloaded video is empty");
+      throw new Error("Downloaded video is empty.");
     }
 
-    console.log(`Downloaded ${inputStat.size} bytes`);
+    console.log(`Downloaded: ${inputStat.size} bytes`);
 
-    await validateDownloadedVideo(inputFile);
+    // STEP 2: VIDEO VALIDATION
 
-    console.log("Converting video to HLS...");
-    const ffmpegArgs = ["-hide_banner", "-y"];
+    console.log("==================================");
+    console.log("STEP 2: Inspecting video");
+    console.log("==================================");
 
-    if (format === "hevc") {
-      ffmpegArgs.push("-f", "hevc");
-    }
+    const videoInfo = getVideoInfo(inputFile, format);
 
-    ffmpegArgs.push(
+    console.log("Container:", videoInfo.format);
+    console.log("Video codec:", videoInfo.codec);
+    console.log("Audio:", videoInfo.hasAudio ? "Yes" : "No");
+
+    // STEP 3: HLS CONVERSION
+
+    console.log("==================================");
+    console.log("STEP 3: Generating HLS");
+    console.log("==================================");
+
+    const playlistPath = path.join(
+      OUTPUT_PATH,
+      "index.m3u8"
+    );
+
+    const segmentPattern = path.join(
+      OUTPUT_PATH,
+      "segment_%05d.ts"
+    );
+
+    const ffmpegArgs = [
+      "-hide_banner",
+      "-y",
       "-i", inputFile,
       "-map", "0:v:0",
       "-map", "0:a:0?",
-      "-c:v", "copy",
-      "-c:a", "aac",
-      "-b:a", "128k",
+      "-sn",
+      "-dn"
+    ];
+
+    // Copy H.264 without re-encoding.
+    // Convert HEVC and other codecs to H.264.
+
+    if (videoInfo.codec === "h264") {
+      console.log("H.264 detected: using stream copy.");
+      ffmpegArgs.push("-c:v", "copy");
+    } else {
+      console.log("Non-H.264 detected: converting to H.264.");
+
+      ffmpegArgs.push(
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p"
+      );
+    }
+
+    if (videoInfo.hasAudio) {
+      ffmpegArgs.push(
+        "-c:a", "aac",
+        "-b:a", "128k"
+      );
+    }
+
+    ffmpegArgs.push(
+      "-max_muxing_queue_size", "1024",
       "-f", "hls",
-      "-hls_time", "10",
+      "-hls_time", segmentDuration,
       "-hls_playlist_type", "vod",
-      "-hls_segment_filename",
-      path.join(OUTPUT_PATH, "segment_%05d.ts"),
-      path.join(OUTPUT_PATH, "index.m3u8")
+      "-hls_flags", "independent_segments",
+      "-start_number", "0",
+      "-hls_segment_filename", segmentPattern,
+      playlistPath
     );
 
     run("ffmpeg", ffmpegArgs);
 
-    const playlistPath = path.join(OUTPUT_PATH, "index.m3u8");
+    // STEP 4: VERIFY OUTPUT
+
+    console.log("==================================");
+    console.log("STEP 4: Verifying HLS output");
+    console.log("==================================");
+
     const playlist = await fs.readFile(playlistPath, "utf8");
 
     if (!playlist.startsWith("#EXTM3U")) {
-      throw new Error("Generated HLS playlist is invalid");
+      throw new Error("Generated playlist is invalid.");
     }
 
-    const files = await fs.readdir(OUTPUT_PATH);
-    const segments = files.filter(file => file.endsWith(".ts"));
+    const outputFiles = await fs.readdir(OUTPUT_PATH);
+
+    const segments = outputFiles.filter(
+      file => /^segment_\d+\.ts$/.test(file)
+    );
 
     if (!segments.length) {
-      throw new Error("No HLS segments were generated");
+      throw new Error("No HLS segments generated.");
     }
 
-    console.log(`Generated ${segments.length} segments`);
+    console.log(`Segments generated: ${segments.length}`);
+
+    // STEP 5: CLONE HUGGING FACE REPOSITORY
+
+    console.log("==================================");
+    console.log("STEP 5: Connecting Hugging Face");
+    console.log("==================================");
 
     const repoDir = path.join(WORK_DIR, "hf-repository");
-    const repoUrl = `https://huggingface.co/datasets/${repoId}`;
-
-    const askpassPath = path.join(WORK_DIR, "git-askpass.sh");
+    const askpassPath = createAskpass();
 
     await fs.writeFile(
       askpassPath,
-      '#!/bin/sh\ncase "$1" in\n' +
+      '#!/bin/sh\n' +
+      'case "$1" in\n' +
       '  *Username*) printf "%s\\n" "user" ;;\n' +
       '  *Password*) printf "%s\\n" "$HF_TOKEN" ;;\n' +
       '  *) exit 1 ;;\n' +
@@ -260,42 +328,75 @@ async function main() {
       HF_TOKEN
     };
 
-    console.log("Cloning Hugging Face repository...");
-    run("git", ["clone", "--depth", "1", repoUrl, repoDir], {
-      env: gitEnv
-    });
+    run("git", [
+      "clone",
+      "--depth", "1",
+      repoUrl,
+      repoDir
+    ], { env: gitEnv });
 
-    const uploadPath = path.resolve(repoDir, outputDir);
-    const relativeUpload = path.relative(repoDir, uploadPath);
+    // STEP 6: CREATE NAMED VIDEO FOLDER
+
+    console.log("==================================");
+    console.log("STEP 6: Preparing upload folder");
+    console.log("==================================");
+
+    const relativeUpload = path.posix.join(
+      outputDir,
+      videoName
+    );
+
+    const uploadPath = path.resolve(
+      repoDir,
+      ...relativeUpload.split("/")
+    );
+
+    const relativeCheck = path.relative(repoDir, uploadPath);
 
     if (
-      relativeUpload.startsWith("..") ||
-      path.isAbsolute(relativeUpload)
+      relativeCheck.startsWith("..") ||
+      path.isAbsolute(relativeCheck)
     ) {
-      throw new Error("Output folder must be inside the repository");
+      throw new Error("Invalid upload destination.");
     }
 
     await fs.mkdir(uploadPath, { recursive: true });
 
-    for (const file of files) {
+    for (const file of outputFiles) {
       await fs.copyFile(
         path.join(OUTPUT_PATH, file),
         path.join(uploadPath, file)
       );
     }
 
+    // Track HLS segments with Git LFS.
+
+    run("git", ["lfs", "track", "*.ts"], {
+      cwd: repoDir
+    });
+
     run("git", ["config", "user.name", "GitHub Actions"], {
       cwd: repoDir
     });
 
     run("git", [
-      "config", "user.email",
+      "config",
+      "user.email",
       "actions@users.noreply.github.com"
     ], { cwd: repoDir });
 
-    run("git", ["add", "--", relativeUpload], {
-      cwd: repoDir
-    });
+    // STEP 7: UPLOAD
+
+    console.log("==================================");
+    console.log("STEP 7: Uploading to Hugging Face");
+    console.log("==================================");
+
+    run("git", [
+      "add",
+      "--",
+      ".gitattributes",
+      relativeUpload
+    ], { cwd: repoDir });
 
     const diff = spawnSync(
       "git",
@@ -307,25 +408,33 @@ async function main() {
       console.log("No changes to upload.");
     } else if (diff.status === 1) {
       run("git", [
-        "commit", "-m", "Upload generated HLS files"
+        "commit",
+        "-m",
+        `Upload HLS: ${videoName}`
       ], { cwd: repoDir });
 
-      console.log("Uploading HLS files to Hugging Face...");
-
-      run("git", [
-        "-c",
-        `http.extraheader=AUTHORIZATION: Basic ${Buffer.from(
-          `user:${HF_TOKEN}`
-        ).toString("base64")}`,
-        "push", "origin", "HEAD"
-      ], { cwd: repoDir });
+      run("git", ["push", "origin", "HEAD"], {
+        cwd: repoDir,
+        env: gitEnv
+      });
     } else {
-      throw new Error("Unable to inspect staged Git changes");
+      throw new Error("Unable to inspect staged Git changes.");
     }
 
-    console.log("Upload completed successfully.");
-    console.log(`Repository: ${repoUrl}`);
-    console.log(`Playlist path: ${outputDir}/index.m3u8`);
+    // STEP 8: FINAL RESULT
+
+    const playlistUrl =
+      `${repoUrl}/resolve/main/${relativeUpload}/index.m3u8`;
+
+    console.log("==================================");
+    console.log("UPLOAD SUCCESSFUL");
+    console.log("==================================");
+
+    console.log("Repository:", repoUrl);
+    console.log("Video name:", videoName);
+    console.log("HF folder:", relativeUpload);
+    console.log("Playlist:", playlistUrl);
+    console.log("Total segments:", segments.length);
 
   } finally {
     await fs.rm(WORK_DIR, {
@@ -338,11 +447,11 @@ async function main() {
       force: true
     });
 
-    console.log("Temporary files deleted.");
+    console.log("Temporary files cleaned.");
   }
 }
 
 main().catch(error => {
-  console.error("Workflow failed:", error.message);
+  console.error("WORKFLOW FAILED:", error.message);
   process.exitCode = 1;
 });
