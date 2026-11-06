@@ -90,47 +90,73 @@ function getSegmentDuration(value) {
   return String(duration);
 }
 
+
 function getVideoInfo(inputFile, format) {
-  const args = [
-    "-v", "error",
-    "-show_entries",
-    "format=format_name:stream=codec_type,codec_name",
-    "-of", "json"
-  ];
+  const candidates =
+    format === "hevc"
+      ? ["hevc"]
+      : format === "auto"
+        ? [null, "hevc"]
+        : [null];
 
-  if (format === "hevc") {
-    args.push("-f", "hevc");
-  }
+  let lastError = "";
 
-  args.push(inputFile);
+  for (const demuxer of candidates) {
+    const args = [
+      "-v", "error",
+      "-analyzeduration", "100M",
+      "-probesize", "100M"
+    ];
 
-  const result = spawnSync("ffprobe", args, {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024
-  });
+    if (demuxer) {
+      args.push("-f", demuxer);
+    }
 
-  if (result.status !== 0 || !result.stdout) {
-    throw new Error(
-      "Invalid video file. URL must point to a direct video file."
+    args.push(
+      "-show_entries",
+      "format=format_name:stream=codec_type,codec_name",
+      "-of", "json",
+      inputFile
     );
+
+    const result = spawnSync("ffprobe", args, {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024
+    });
+
+    if (result.status !== 0 || !result.stdout?.trim()) {
+      lastError = result.stderr || "FFprobe could not identify the file.";
+      continue;
+    }
+
+    try {
+      const info = JSON.parse(result.stdout);
+
+      const video = info.streams?.find(
+        stream => stream.codec_type === "video"
+      );
+
+      if (!video) {
+        lastError = "No video stream found.";
+        continue;
+      }
+
+      return {
+        codec: video.codec_name,
+        hasAudio: info.streams.some(
+          stream => stream.codec_type === "audio"
+        ),
+        format: info.format?.format_name || demuxer || "unknown",
+        demuxer
+      };
+    } catch (error) {
+      lastError = error.message;
+    }
   }
 
-  const info = JSON.parse(result.stdout);
-  const video = info.streams?.find(
-    stream => stream.codec_type === "video"
+  throw new Error(
+    `Video detection failed. FFprobe details: ${lastError}`
   );
-
-  if (!video) {
-    throw new Error("No video stream found in downloaded file.");
-  }
-
-  return {
-    codec: video.codec_name,
-    hasAudio: info.streams.some(
-      stream => stream.codec_type === "audio"
-    ),
-    format: info.format?.format_name || "unknown"
-  };
 }
 
 function createAskpass() {
