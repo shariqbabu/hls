@@ -257,15 +257,22 @@ async function main() {
       "segment_%05d.ts"
     );
 
-    const ffmpegArgs = [
-      "-hide_banner",
-      "-y",
-      "-i", inputFile,
-      "-map", "0:v:0",
-      "-map", "0:a:0?",
-      "-sn",
-      "-dn"
-    ];
+    const ffmpegArgs = [ "-hide_banner", "-y" ];
+
+if (videoInfo.demuxer) {
+  ffmpegArgs.push("-f", videoInfo.demuxer);
+}
+
+const ffmpegArgs = [
+  "-hide_banner",
+  "-y"
+];
+
+if (videoInfo.demuxer) {
+  ffmpegArgs.push("-f", videoInfo.demuxer);
+}
+
+  ffmpegArgs.push( "-analyzeduration", "100M", "-probesize", "100M", "-i", inputFile, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn" ];
 
     // Copy H.264 without re-encoding.
     // Convert HEVC and other codecs to H.264.
