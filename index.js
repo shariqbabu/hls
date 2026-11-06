@@ -16,7 +16,7 @@ const {
 
 const WORK_DIR = path.resolve("temp-work");
 const INPUT_DIR = path.join(WORK_DIR, "input");
-const OUTPUT_PATH = path.resolve("nexplay");
+const OUTPUT_PATH = path.resolve("hls-output");
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
