@@ -423,18 +423,34 @@ async function main() {
 
     // STEP 8: FINAL RESULT
 
-    const playlistUrl =
-      `${repoUrl}/resolve/main/${relativeUpload}/index.m3u8`;
+    
+    // STEP 8: FINAL RESULT
 
-    console.log("==================================");
-    console.log("UPLOAD SUCCESSFUL");
+    const baseUrl =
+      `${repoUrl}/resolve/main/${relativeUpload}`;
+
+    const playlistUrl = `${baseUrl}/index.m3u8`;
+
+    console.log("\n==================================");
+    console.log("HUGGING FACE UPLOAD SUCCESSFUL");
     console.log("==================================");
 
-    console.log("Repository:", repoUrl);
-    console.log("Video name:", videoName);
-    console.log("HF folder:", relativeUpload);
-    console.log("Playlist:", playlistUrl);
-    console.log("Total segments:", segments.length);
+    console.log("\nVIDEO NAME:", videoName);
+    console.log("HF FOLDER:", relativeUpload);
+    console.log("TOTAL SEGMENTS:", segments.length);
+
+    console.log("\nPLAYLIST URL:");
+    console.log(playlistUrl);
+
+    console.log("\nALL SEGMENT URLS:");
+
+    for (const segment of segments.sort()) {
+      console.log(`${baseUrl}/${segment}`);
+    }
+
+    console.log("\n==================================");
+    console.log("ALL URLS GENERATED SUCCESSFULLY");
+    console.log("==================================");
 
   } finally {
     await fs.rm(WORK_DIR, {
