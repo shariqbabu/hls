@@ -15,3 +15,5 @@ Existing `next`, `next2`, ... prefetch query parameters are retained.
 
 This balances HLS playlist segment requests, not Telegram upload traffic.
 A video with fewer than 72 segments will only use that many Workers.
+
+url=https://huggingface.co/datasets/shariqbabu/hls-storage/resolve/main/
