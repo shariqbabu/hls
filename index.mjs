@@ -1,16 +1,14 @@
 /**
- * Complete Video -> HLS -> Hugging Face Dataset pipeline
+ * Complete Video -> HLS -> Hugging Face Storage Bucket pipeline
  *
  * Required env:
- *   VIDEO_URL, HF_TOKEN, HF_REPO_ID
+ *   VIDEO_URL, HF_TOKEN, HF_BUCKET_ID
  *
  * Optional env:
  *   VIDEO_NAME=my-video
  *   INPUT_FORMAT=auto|mp4|mkv|hevc
  *   SEGMENT_DURATION=6
- *   HF_PATH=hls                 (remote folder in the dataset)
- *   HF_BATCH_SIZE=40
- *   HF_BRANCH=main
+ *   HF_PATH=hls                 (remote folder in the bucket)
  *   WORK_DIR=temp-work
  *
  * Notes:
@@ -22,11 +20,8 @@
 import fs from "node:fs/promises";
 import path from "node:fs";
 import pathModule from "node:path";
-import os from "node:os";
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
 import crypto from "node:crypto";
-import { downloadFile, uploadFiles } from "@huggingface/hub";
 
 const {
   VIDEO_URL,
@@ -34,11 +29,8 @@ const {
   INPUT_FORMAT = "auto",
   SEGMENT_DURATION = "6",
   HF_TOKEN,
-  HF_REPO_ID,
-  HF_REPO_TYPE = "dataset",
+  HF_BUCKET_ID,
   HF_PATH = "hls",
-  HF_BATCH_SIZE = "40",
-  HF_BRANCH = "main",
   WORK_DIR = "temp-work"
 } = process.env;
 
@@ -215,34 +207,16 @@ async function readDurations(m3u8Path) {
   return { durations, targetDuration };
 }
 
-function encodeRepoPath(repoPath) {
-  return repoPath.split("/").map(encodeURIComponent).join("/");
+function encodeBucketPath(value) {
+  return value.split("/").map(encodeURIComponent).join("/");
 }
 
-function makeResolveUrl(repoId, repoPath, branch) {
-  return `https://huggingface.co/datasets/${repoId}/resolve/${encodeURIComponent(branch)}/${encodeRepoPath(repoPath)}`;
+function makeBucketResolveUrl(bucketId, bucketPath) {
+  // Bucket URLs are unversioned and use /resolve/<path> (no branch segment).
+  return `https://huggingface.co/buckets/${bucketId}/resolve/${encodeBucketPath(bucketPath)}`;
 }
 
-async function uploadBatch(repo, token, branch, batch, batchNumber, totalBatches, stateLocalPath, stateRemotePath) {
-  const files = batch.map(item => ({
-    path: item.remotePath,
-    content: pathToFileURL(item.localPath)
-  }));
-  files.push({ path: stateRemotePath, content: pathToFileURL(stateLocalPath) });
-
-  console.log(`\n⬆️ Upload batch ${batchNumber}/${totalBatches} (${batch.length} segments + checkpoint)`);
-  await uploadFiles({
-    repo,
-    accessToken: token,
-    branch,
-    files,
-    commitTitle: `Upload HLS batch ${batchNumber}/${totalBatches}`,
-    commitDescription: "HLS segment upload via Node.js"
-  });
-}
-
-async function uploadHls(hlsDir, movieName, token, repoId, remoteRoot, batchSize, branch) {
-  const repo = { type: "dataset", name: repoId };
+async function uploadHls(hlsDir, movieName, token, bucketId, remoteRoot) {
   const stat = await fs.stat(hlsDir).catch(() => null);
   if (!stat?.isDirectory()) throw new Error(`HLS directory does not exist: ${hlsDir}`);
 
@@ -259,87 +233,29 @@ async function uploadHls(hlsDir, movieName, token, repoId, remoteRoot, batchSize
     .reduce((sum, size) => sum + size, 0);
 
   console.log("\n" + "=".repeat(64));
-  console.log("🤗 HUGGING FACE HLS UPLOADER");
-  console.log(`📦 Dataset       : ${repoId}`);
+  console.log("🤗 HUGGING FACE BUCKET UPLOADER");
+  console.log(`🪣 Bucket        : ${bucketId}`);
   console.log(`📁 Remote folder : ${movieRoot}`);
   console.log(`🎞️ Segments      : ${segmentFiles.length}`);
   console.log(`💾 Total size    : ${(totalBytes / 1024 / 1024).toFixed(2)} MB`);
   console.log("=".repeat(64));
 
-  const startedAt = Date.now();
   const mapping = {};
-  const uploadItems = [];
-  const stateRemotePath = `${movieRoot}/upload-state.json`;
-  const stateLocalPath = pathModule.join(hlsDir, "upload-state.json");
-  let remoteState = {};
-
-  try {
-    const remoteStateFile = await downloadFile({ repo, path: stateRemotePath, accessToken: token });
-    if (remoteStateFile) {
-      const parsed = JSON.parse(await remoteStateFile.text());
-      remoteState = parsed.segments && typeof parsed.segments === "object" ? parsed.segments : {};
-      console.log(`🔄 Resume checkpoint found: ${Object.keys(remoteState).length} segment records.`);
-    }
-  } catch {
-    console.log("ℹ️ No previous upload checkpoint found; starting a new upload.");
-  }
-
   for (let i = 0; i < segmentFiles.length; i++) {
     const file = segmentFiles[i];
     const fileStat = await fs.stat(file.localPath);
     const remotePath = `${movieRoot}/${file.name}`;
-    const duration = durations.get(file.name) ?? (Number(SEGMENT_DURATION) || 6);
-    const sha256 = await sha256File(file.localPath);
-    const url = makeResolveUrl(repoId, remotePath, branch);
-
     mapping[file.name] = {
       filename: file.name,
       path: remotePath,
-      url,
+      url: makeBucketResolveUrl(bucketId, remotePath),
       size_bytes: fileStat.size,
-      duration_seconds: duration,
-      sha256
+      duration_seconds: durations.get(file.name) ?? (Number(SEGMENT_DURATION) || 6),
+      sha256: await sha256File(file.localPath)
     };
-
-    const previous = remoteState[file.name];
-    if (previous?.sha256 === sha256 && previous?.size_bytes === fileStat.size) {
-      console.log(`⏭️ Already uploaded; skipping ${file.name}`);
-    } else {
-      uploadItems.push({ localPath: file.localPath, remotePath, size: fileStat.size });
-    }
     if ((i + 1) % 25 === 0 || i + 1 === segmentFiles.length) {
       console.log(`🔍 Prepared ${i + 1}/${segmentFiles.length} segments`);
     }
-  }
-
-  const totalBatches = Math.ceil(uploadItems.length / batchSize);
-  let completed = segmentFiles.length - uploadItems.length;
-  let uploadedBytes = 0;
-
-  for (let offset = 0; offset < uploadItems.length; offset += batchSize) {
-    const batch = uploadItems.slice(offset, offset + batchSize);
-    const batchNumber = Math.floor(offset / batchSize) + 1;
-
-    // Update checkpoint in the same Hub commit as this batch's segments.
-    const nextState = { ...remoteState };
-    for (const item of batch) {
-      const name = pathModule.basename(item.localPath);
-      nextState[name] = mapping[name];
-    }
-    await fs.writeFile(stateLocalPath, JSON.stringify({
-      movie: movieName,
-      updated_at: new Date().toISOString(),
-      segments: nextState
-    }, null, 2) + "\n", "utf8");
-
-    await uploadBatch(repo, token, branch, batch, batchNumber, totalBatches, stateLocalPath, stateRemotePath);
-    remoteState = nextState;
-
-    completed += batch.length;
-    uploadedBytes += batch.reduce((sum, item) => sum + item.size, 0);
-    const elapsed = Math.max((Date.now() - startedAt) / 1000, 0.1);
-    const speed = uploadedBytes / 1024 / 1024 / elapsed;
-    console.log(`✅ ${completed}/${segmentFiles.length} files (${(completed / segmentFiles.length * 100).toFixed(1)}%) | ${speed.toFixed(2)} MB/s average`);
   }
 
   const playlistLines = [
@@ -355,57 +271,41 @@ async function uploadHls(hlsDir, movieName, token, repoId, remoteRoot, batchSize
   }
   playlistLines.push("#EXT-X-ENDLIST");
 
-  const playlistLocalPath = pathModule.join(hlsDir, "index.m3u8");
-  const mappingLocalPath = pathModule.join(hlsDir, "mapping.json");
-  const segmentMappingLocalPath = pathModule.join(hlsDir, "segment_mapping.json");
-  const playlistRemotePath = `${movieRoot}/index.m3u8`;
-  const mappingRemotePath = `${movieRoot}/mapping.json`;
-  const segmentMappingRemotePath = `${movieRoot}/segment_mapping.json`;
+  await fs.writeFile(pathModule.join(hlsDir, "index.m3u8"), playlistLines.join("\n") + "\n", "utf8");
+  await fs.writeFile(pathModule.join(hlsDir, "mapping.json"), JSON.stringify(mapping, null, 2) + "\n", "utf8");
+  await fs.writeFile(pathModule.join(hlsDir, "segment_mapping.json"), JSON.stringify(mapping, null, 2) + "\n", "utf8");
 
-  await fs.writeFile(playlistLocalPath, playlistLines.join("\n") + "\n", "utf8");
-  await fs.writeFile(mappingLocalPath, JSON.stringify(mapping, null, 2) + "\n", "utf8");
-  await fs.writeFile(segmentMappingLocalPath, JSON.stringify(mapping, null, 2) + "\n", "utf8");
-
-  await uploadFiles({
-    repo,
-    accessToken: token,
-    branch,
-    files: [
-      { path: playlistRemotePath, content: pathToFileURL(playlistLocalPath) },
-      { path: mappingRemotePath, content: pathToFileURL(mappingLocalPath) },
-      { path: segmentMappingRemotePath, content: pathToFileURL(segmentMappingLocalPath) }
-    ],
-    commitTitle: `Publish HLS playlist: ${movieName}`,
-    commitDescription: "Publish HLS playlist and segment mapping after segment upload"
+  const destination = `hf://buckets/${bucketId}/${movieRoot}`;
+  console.log(`\n⬆️ Syncing HLS folder to ${destination}`);
+  console.log("ℹ️ Bucket sync compares remote files and uploads only new or changed files.");
+  await run("hf", ["buckets", "sync", hlsDir, destination], {
+    streamOutput: true,
+    env: { ...process.env, HF_TOKEN: token }
   });
 
-  const elapsed = Math.max((Date.now() - startedAt) / 1000, 0.1);
+  const playlistUrl = makeBucketResolveUrl(bucketId, `${movieRoot}/index.m3u8`);
+  const mappingUrl = makeBucketResolveUrl(bucketId, `${movieRoot}/mapping.json`);
   console.log("\n" + "=".repeat(64));
-  console.log("🎉 HLS UPLOAD COMPLETE");
-  console.log(`⏱️ Upload time : ${elapsed.toFixed(1)} seconds`);
-  console.log(`📄 Playlist    : ${makeResolveUrl(repoId, playlistRemotePath, branch)}`);
-  console.log(`🗂️ Mapping     : ${makeResolveUrl(repoId, mappingRemotePath, branch)}`);
+  console.log("🎉 HLS BUCKET SYNC COMPLETE");
+  console.log(`🪣 Bucket   : https://huggingface.co/buckets/${bucketId}`);
+  console.log(`📄 Playlist : ${playlistUrl}`);
+  console.log(`🗂️ Mapping  : ${mappingUrl}`);
   console.log("=".repeat(64));
 }
 
 async function main() {
   const videoUrl = required(VIDEO_URL, "VIDEO_URL");
   const token = required(HF_TOKEN, "HF_TOKEN");
-  const repoId = required(HF_REPO_ID, "HF_REPO_ID");
-  if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoId)) {
-    throw new Error("HF_REPO_ID must be in username/repository-name format.");
+  const bucketId = required(HF_BUCKET_ID, "HF_BUCKET_ID");
+  if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(bucketId)) {
+    throw new Error("HF_BUCKET_ID must be in username/bucket-name format.");
   }
-  if (HF_REPO_TYPE !== "dataset") throw new Error("HF_REPO_TYPE must be 'dataset'.");
   const remoteRoot = safeFolder(HF_PATH, "HF_PATH");
   const movieName = safeName(VIDEO_NAME);
   const segmentDuration = Number(SEGMENT_DURATION);
-  const batchSize = Number(HF_BATCH_SIZE);
 
   if (!Number.isInteger(segmentDuration) || segmentDuration < 1 || segmentDuration > 60) {
     throw new Error("SEGMENT_DURATION must be an integer from 1 to 60.");
-  }
-  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 200) {
-    throw new Error("HF_BATCH_SIZE must be an integer from 1 to 200.");
   }
   if (!["auto", "mp4", "mkv", "hevc"].includes(INPUT_FORMAT)) {
     throw new Error("INPUT_FORMAT must be auto, mp4, mkv, or hevc.");
@@ -413,6 +313,10 @@ async function main() {
 
   await run("ffmpeg", ["-version"]);
   await run("curl", ["--version"]);
+  await run("hf", ["--version"]);
+  await run("hf", ["buckets", "info", bucketId], {
+    streamOutput: true, env: { ...process.env, HF_TOKEN: token }
+  });
 
   const workRoot = pathModule.resolve(WORK_DIR);
   const downloadDir = pathModule.join(workRoot, "download");
@@ -423,19 +327,19 @@ async function main() {
   const inputFile = pathModule.join(downloadDir, `source${inputExtension(videoUrl, INPUT_FORMAT)}`);
 
   console.log("=".repeat(64));
-  console.log("🎬 VIDEO → HLS → HUGGING FACE");
+  console.log("🎬 VIDEO → HLS → HUGGING FACE BUCKET");
   console.log(`🎞️ Video name     : ${movieName}`);
   console.log(`📁 Local HLS dir  : ${hlsDir}`);
-  console.log(`📦 HF destination : ${remoteRoot}/${movieName}`);
+  console.log(`🪣 HF destination : ${bucketId}/${remoteRoot}/${movieName}`);
   console.log("=".repeat(64));
 
   await downloadVideo(videoUrl, inputFile);
   await convertToHls(inputFile, hlsDir, segmentDuration);
-  await uploadHls(hlsDir, movieName, token, repoId, remoteRoot, batchSize, HF_BRANCH);
+  await uploadHls(hlsDir, movieName, token, bucketId, remoteRoot);
 }
 
 main().catch(error => {
-  console.error("\n❌ VIDEO → HLS → HUGGING FACE FAILED:");
+  console.error("\n❌ VIDEO → HLS → HUGGING FACE BUCKET FAILED:");
   console.error(error?.stack || error);
   process.exitCode = 1;
 });
