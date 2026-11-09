@@ -110,7 +110,7 @@ jobs:
           HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
           HF_REPO_TYPE: dataset
 
-        run: node index.cjs
+        run: node index.mjs
 
       - name: Cleanup temporary files
         if: always()
