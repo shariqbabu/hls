@@ -28,7 +28,7 @@ jobs:
       TG_SESSION: ${{ secrets.TG_SESSION }}
       TG_CHANNEL: ${{ secrets.TG_CHANNEL }}
       WORKER_URLS: ${{ secrets.WORKER_URLS }}
-      WORKER_COUNT: "72"
+      WORKER_COUNT: "15"
       WORKER_PREFETCH_COUNT: "5"
       TG_UPLOAD_CONCURRENCY: "8"
       TG_UPLOAD_TIMEOUT: "900"
@@ -83,7 +83,7 @@ jobs:
           import os, re
           urls = [x.strip() for x in re.split(r"[\r\n,]+", os.getenv("WORKER_URLS", "")) if x.strip()]
           urls = list(dict.fromkeys(urls))
-          if len(urls) != 72:
+          if len(urls) != 15:
               raise SystemExit(f"Expected 72 unique Worker URLs, found {len(urls)}")
           if any(not u.startswith(("https://", "http://")) for u in urls):
               raise SystemExit("Every Worker URL must start with http:// or https://")
