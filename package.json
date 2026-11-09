@@ -1,9 +1,12 @@
 {
-  "name": "HuggingFace Hls",
+  "name": "huggingface-hls",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@huggingface/hub": "^2.8.0"
   }
 }
