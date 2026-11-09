@@ -117,53 +117,64 @@ async function convertToHls(inputFile, hlsDir, segmentDuration) {
   const playlist = pathModule.join(hlsDir, "index.m3u8");
   const segmentPattern = pathModule.join(hlsDir, "segment_%05d.ts");
 
-  const common = [
-    "-hide_banner", "-y", "-i", inputFile,
-    "-map", "0:v:0", "-map", "0:a:0?",
-    "-c:v", "copy",
+  // Always encode video to H.264. The supplied source is VP9 in an MKV
+  // container; copying VP9 into MPEG-TS HLS can produce audio with black video.
+  // Explicit stream mapping also excludes the attached PNG cover-art stream.
+  const ffmpegArgs = [
+    "-hide_banner", "-y",
+    "-i", inputFile,
+    "-map", "0:v:0",
+    "-map", "0:a:0?",
+    "-sn", "-dn",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "22",
+    "-pix_fmt", "yuv420p",
+    "-profile:v", "high",
+    "-level:v", "5.1",
+    "-c:a", "aac",
+    "-b:a", "160k",
+    "-ac", "2",
+    "-ar", "44100",
+    "-max_muxing_queue_size", "2048",
     "-f", "hls",
     "-hls_time", String(segmentDuration),
     "-hls_playlist_type", "vod",
+    "-hls_segment_type", "mpegts",
     "-hls_flags", "independent_segments",
     "-hls_segment_filename", segmentPattern,
     playlist
   ];
 
-  console.log("🎞️ Converting video to HLS (video/audio stream-copy)...");
-  try {
-    await run("ffmpeg", [...common.slice(0, common.indexOf("-f")), "-c:a", "copy", ...common.slice(common.indexOf("-f"))], {
-      streamOutput: true
-    });
-  } catch (copyError) {
-    console.warn("\n⚠️ Audio stream-copy failed. Retrying with AAC audio; video remains stream-copy.");
-    await fs.rm(hlsDir, { recursive: true, force: true });
-    await fs.mkdir(hlsDir, { recursive: true });
-    const fallback = [
-      "-hide_banner", "-y", "-i", inputFile,
-      "-map", "0:v:0", "-map", "0:a:0?",
-      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-      "-f", "hls",
-      "-hls_time", String(segmentDuration),
-      "-hls_playlist_type", "vod",
-      "-hls_flags", "independent_segments",
-      "-hls_segment_filename", segmentPattern,
-      playlist
-    ];
-    try {
-      await run("ffmpeg", fallback, { streamOutput: true });
-    } catch (fallbackError) {
-      throw new Error(
-        `HLS conversion failed.\nStream-copy attempt:\n${copyError.message}\nAAC-audio fallback:\n${fallbackError.message}`
-      );
-    }
-  }
+  console.log("🎞️ Converting source to browser-compatible HLS...");
+  console.log("   Video: H.264 / yuv420p (4K resolution preserved)");
+  console.log("   Audio: AAC / 44.1 kHz / stereo");
+  console.log("   Attached images/subtitles/data streams: excluded");
 
+  await run("ffmpeg", ffmpegArgs, { streamOutput: true });
+
+  // Verify that FFmpeg produced video and audio in the HLS transport stream.
   const files = await fs.readdir(hlsDir);
   const segments = files.filter(name => /^segment_.*\.ts$/i.test(name));
   if (!segments.length || !files.includes("index.m3u8")) {
     throw new Error(`FFmpeg did not produce expected HLS files in ${hlsDir}`);
   }
-  console.log(`✅ HLS generated: ${segments.length} segments`);
+
+  const firstSegment = pathModule.join(hlsDir, segments.sort()[0]);
+  const probe = await run("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=codec_name,pix_fmt,width,height",
+    "-of", "default=noprint_wrappers=1",
+    firstSegment
+  ]);
+  const videoInfo = probe.stdout.trim();
+  if (!videoInfo.includes("codec_name=h264")) {
+    throw new Error(`HLS video verification failed; expected H.264. ffprobe returned:\n${videoInfo}`);
+  }
+
+  console.log(`✅ HLS generated and verified: ${segments.length} segments`);
+  console.log(`   First-segment video: ${videoInfo.replace(/\n/g, ", ")}`);
 }
 
 function sortSegments(a, b) {
