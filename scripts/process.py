@@ -86,46 +86,15 @@ def parse_local_m3u8(m3u8_path: Path):
     return target_duration, segment_durations
 
 
-def normalize_worker_url(worker_url: str) -> str:
-    """Normalize a Worker base URL to the Telegram stream endpoint."""
+def build_streaming_m3u8(mapping: dict, worker_url: str, target_duration: int, segment_durations: dict, prefetch_count: int = 5) -> str:
     worker_base = worker_url.strip().rstrip("/")
-    if not worker_base:
-        raise ValueError("Worker URL cannot be empty")
-    if worker_base.endswith("/api/tg/stream"):
-        return worker_base
-    if worker_base.endswith("/api/tg"):
-        return worker_base + "/stream"
-    return worker_base + "/api/tg/stream"
+    if not worker_base.endswith("/api/tg/stream"):
+        if worker_base.endswith("/api/tg"):
+            worker_base += "/stream"
+        elif "/api/tg" not in worker_base:
+            worker_base += "/api/tg/stream"
 
-
-def parse_worker_urls(raw_urls: str, expected_count: int = 72) -> list:
-    """Read newline/comma-separated Worker URLs and validate the pool."""
-    urls = [x.strip() for x in re.split(r"[\r\n,]+", raw_urls or "") if x.strip()]
-    urls = list(dict.fromkeys(urls))
-    if len(urls) != expected_count:
-        raise ValueError(
-            f"Expected exactly {expected_count} unique Worker URLs, got {len(urls)}. "
-            "Set WORKER_URLS as a newline-separated GitHub Secret."
-        )
-    for i, url in enumerate(urls, 1):
-        if not url.startswith(("https://", "http://")):
-            raise ValueError(f"Worker URL #{i} must start with http:// or https://")
-    return [normalize_worker_url(url) for url in urls]
-
-
-def build_streaming_m3u8(mapping: dict, worker_urls: list, target_duration: int,
-                         segment_durations: dict, prefetch_count: int = 5) -> str:
-    from urllib.parse import urlencode
-
-    if not worker_urls:
-        raise ValueError("Worker URL pool is empty")
-    worker_urls = [normalize_worker_url(url) for url in worker_urls]
-
-    def segment_sort_key(name):
-        match = re.search(r"(\d+)(?=\.ts$)", name)
-        return (0, int(match.group(1))) if match else (1, name)
-
-    sorted_fnames = sorted(mapping.keys(), key=segment_sort_key)
+    sorted_fnames = sorted(mapping.keys())
     msg_ids = [str(mapping[fname]["message_id"]) for fname in sorted_fnames]
 
     playlist = [
@@ -135,17 +104,17 @@ def build_streaming_m3u8(mapping: dict, worker_urls: list, target_duration: int,
         f"#EXT-X-TARGETDURATION:{target_duration}"
     ]
 
-    for n, fname in enumerate(sorted_fnames):
+    for n in range(len(sorted_fnames)):
+        fname = sorted_fnames[n]
         dur = segment_durations.get(fname, "6.000000")
-        # True round-robin: each consecutive segment uses a different Worker.
-        worker_base = worker_urls[n % len(worker_urls)]
-        params = [("msg", msg_ids[n])]
+
+        params = [f"msg={msg_ids[n]}"]
         for offset in range(1, prefetch_count + 1):
             if n + offset < len(msg_ids):
                 key = "next" if offset == 1 else f"next{offset}"
-                params.append((key, msg_ids[n + offset]))
+                params.append(f"{key}={msg_ids[n + offset]}")
 
-        chunk_url = f"{worker_base}?{urlencode(params)}"
+        chunk_url = f"{worker_base}?{'&'.join(params)}"
         playlist.append(f"#EXTINF:{float(dur):.6f},")
         playlist.append(chunk_url)
 
@@ -202,12 +171,8 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
     raw_session = get_env_var("TG_SESSION", default="")
     tg_bot_token = get_env_var("TG_BOT_TOKEN", default="")
     tg_channel = get_env_var("TG_CHANNEL", required=True)
-    raw_worker_urls = get_env_var("WORKER_URLS", default="")
-    expected_worker_count = int(get_env_var("WORKER_COUNT", default="72"))
-    worker_urls = parse_worker_urls(raw_worker_urls, expected_worker_count)
-    prefetch_count = int(get_env_var("WORKER_PREFETCH_COUNT", default="5"))
-    if prefetch_count < 0 or prefetch_count > 20:
-        raise ValueError("WORKER_PREFETCH_COUNT must be between 0 and 20")
+    raw_worker_url = get_env_var("WORKER_URL", default="api/tg/stream")
+    worker_url = "api/tg/stream" if (not raw_worker_url or "***" in raw_worker_url) else raw_worker_url
 
     tg_session = sanitize_session_string(raw_session)
 
@@ -434,10 +399,10 @@ async def upload_segments_to_telegram(hls_dir: Path, movie_name: str):
         # Generate zero-buffer index.m3u8
         m3u8_content = build_streaming_m3u8(
             mapping=mapping,
-            worker_urls=worker_urls,
+            worker_url=worker_url,
             target_duration=target_dur,
             segment_durations=segment_durs,
-            prefetch_count=prefetch_count
+            prefetch_count=5
         )
 
         index_m3u8_file = hls_dir / "index.m3u8"
