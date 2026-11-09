@@ -1,4 +1,3 @@
-
 name: Convert Video to Hugging Face HLS
 
 on:
@@ -58,16 +57,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
 
       - name: Install FFmpeg, Git and Git LFS
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg git git-lfs curl
           git lfs install
+          ffmpeg -version
+          node --version
+          npm --version
 
       - name: Install Node dependencies
-        run: |
-          npm install @huggingface/hub
+        run: npm install
 
       - name: Validate workflow inputs
         env:
@@ -75,12 +77,15 @@ jobs:
           VIDEO_NAME: ${{ inputs.video_name }}
           VIDEO_URL: ${{ inputs.video_url }}
           SEGMENT_DURATION: ${{ inputs.segment_duration }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
         run: |
-          set -e
-
+          set -euo pipefail
           test -n "$HF_PATH"
           test -n "$VIDEO_NAME"
           test -n "$VIDEO_URL"
+          test -n "$HF_TOKEN"
+          test -n "$HF_REPO_ID"
 
           if ! [[ "$SEGMENT_DURATION" =~ ^[0-9]+$ ]]; then
             echo "Invalid segment duration"
@@ -96,19 +101,20 @@ jobs:
 
       - name: Download, convert and upload to Hugging Face
         env:
-          OUTPUT_DIR: ${{ inputs.hf_path }}
-          VIDEO_NAME: ${{ inputs.video_name }}
           VIDEO_URL: ${{ inputs.video_url }}
+          VIDEO_NAME: ${{ inputs.video_name }}
           INPUT_FORMAT: ${{ inputs.input_format }}
           SEGMENT_DURATION: ${{ inputs.segment_duration }}
 
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
           HF_REPO_TYPE: dataset
-
-        run: node index.mjs
+          HF_PATH: ${{ inputs.hf_path }}
+          HF_BATCH_SIZE: "40"
+          HF_BRANCH: main
+          WORK_DIR: temp-work
+        run: npm start
 
       - name: Cleanup temporary files
         if: always()
-        run: |
-          rm -rf temp-work hls-output
+        run: rm -rf temp-work
