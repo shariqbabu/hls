@@ -67,11 +67,7 @@ jobs:
 
       - name: Install Node dependencies
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          elif [ -f package.json ]; then
-            npm install
-          fi
+          npm install @huggingface/hub
 
       - name: Validate workflow inputs
         env:
