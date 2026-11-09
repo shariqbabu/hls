@@ -1,10 +1,10 @@
-name: Convert Video to Hugging Face HLS
+name: Convert Video to Hugging Face Bucket HLS
 
 on:
   workflow_dispatch:
     inputs:
       hf_path:
-        description: "Hugging Face output folder path"
+        description: "Hugging Face bucket output folder path"
         required: true
         type: string
         default: hls
@@ -41,7 +41,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: hf-hls-upload
+  group: hf-hls-bucket-upload
   cancel-in-progress: false
 
 jobs:
@@ -57,64 +57,60 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
-      - name: Install FFmpeg, Git and Git LFS
+      - name: Install Python, FFmpeg and Hugging Face CLI
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg git git-lfs curl
-          git lfs install
+          sudo apt-get install -y ffmpeg curl python3 python3-pip python3-venv
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip huggingface_hub
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
           ffmpeg -version
           node --version
-          npm --version
+          hf --version
 
-      - name: Install Node dependencies
-        run: npm install
-
-      - name: Validate workflow inputs
+      - name: Validate inputs and bucket access
         env:
           HF_PATH: ${{ inputs.hf_path }}
           VIDEO_NAME: ${{ inputs.video_name }}
           VIDEO_URL: ${{ inputs.video_url }}
           SEGMENT_DURATION: ${{ inputs.segment_duration }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
+          HF_BUCKET_ID: ${{ secrets.HF_BUCKET_ID }}
         run: |
           set -euo pipefail
           test -n "$HF_PATH"
           test -n "$VIDEO_NAME"
           test -n "$VIDEO_URL"
           test -n "$HF_TOKEN"
-          test -n "$HF_REPO_ID"
+          test -n "$HF_BUCKET_ID"
 
-          if ! [[ "$SEGMENT_DURATION" =~ ^[0-9]+$ ]]; then
-            echo "Invalid segment duration"
+          if ! [[ "$HF_BUCKET_ID" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+            echo "HF_BUCKET_ID must be namespace/bucket-name"
             exit 1
           fi
 
-          if [ "$SEGMENT_DURATION" -lt 1 ] || [ "$SEGMENT_DURATION" -gt 60 ]; then
+          if ! [[ "$SEGMENT_DURATION" =~ ^[0-9]+$ ]] || [ "$SEGMENT_DURATION" -lt 1 ] || [ "$SEGMENT_DURATION" -gt 60 ]; then
             echo "Segment duration must be between 1 and 60 seconds"
             exit 1
           fi
 
-          echo "All inputs validated."
+          hf buckets info "$HF_BUCKET_ID"
+          echo "Bucket access verified."
 
-      - name: Download, convert and upload to Hugging Face
+      - name: Download, convert and upload to Hugging Face Bucket
         env:
           VIDEO_URL: ${{ inputs.video_url }}
           VIDEO_NAME: ${{ inputs.video_name }}
           INPUT_FORMAT: ${{ inputs.input_format }}
           SEGMENT_DURATION: ${{ inputs.segment_duration }}
-
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_REPO_ID: ${{ secrets.HF_REPO_ID }}
-          HF_REPO_TYPE: dataset
+          HF_BUCKET_ID: ${{ secrets.HF_BUCKET_ID }}
           HF_PATH: ${{ inputs.hf_path }}
-          HF_BATCH_SIZE: "40"
-          HF_BRANCH: main
           WORK_DIR: temp-work
-        run: npm start
+        run: node index.mjs
 
       - name: Cleanup temporary files
         if: always()
-        run: rm -rf temp-work
+        run: rm -rf temp-work .venv
