@@ -134,12 +134,32 @@
           },
           {
           "episode_number": 12,
-          "title": "India's Got Latent — Episode 12",
+          "title": "India's Got Latent Ep 12",
           "poster": "https://shariqbabu.github.io/hls/series/latent/2/12/poster.jpg",
           "plot": "This video is the 12th episode of Season 2 of India's Got Latent, a comedy talent show hosted by Samay Raina. The episode features a panel consisting of MC Stan, Tanmay Bhat, Madhur Virli, and Arpit Bala. The show follows a format where various participants perform acts, followed by commentary, lighthearted roasting, and scoring from the judges.",
           "quality": "1080p",
           "playback": {
             "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/12/master.m3u8",
+            "format": "hls"
+          },
+          {
+          "episode_number": 13,
+          "title": "India's Got Latent Ep 13",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/13/poster.jpg",
+          "plot": "This video is the 12th episode of Season 2 of India's Got Latent, a comedy talent show hosted by Samay Raina. The episode features a panel consisting of MC Stan, Tanmay Bhat, Madhur Virli, and Arpit Bala. The show follows a format where various participants perform acts, followed by commentary, lighthearted roasting, and scoring from the judges.",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/13/master.m3u8",
+            "format": "hls"
+          },
+          {
+          "episode_number": 14,
+          "title": "India's Got Latent Ep 14",
+          "poster": "https://shariqbabu.github.io/hls/series/latent/2/14/poster.jpg",
+          "plot": "This video is the 12th episode of Season 2 of India's Got Latent, a comedy talent show hosted by Samay Raina. The episode features a panel consisting of MC Stan, Tanmay Bhat, Madhur Virli, and Arpit Bala. The show follows a format where various participants perform acts, followed by commentary, lighthearted roasting, and scoring from the judges.",
+          "quality": "1080p",
+          "playback": {
+            "streamUrl": "https://shariqbabu.github.io/hls/series/latent/2/14/master.m3u8",
             "format": "hls"
           }
         }
