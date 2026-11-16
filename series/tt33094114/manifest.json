@@ -160,16 +160,6 @@
           "playback": {
             "streamUrl": "https://vibestream.dpdns.org/series/latent/2/14/master.m3u8",
             "format": "hls"
-          },
-          {
-          "episode_number": 15,
-          "title": "India's Got Latent Ep 15",
-          "poster": "https://vibestream.dpdns.org/series/latent/2/14/poster.jpg",
-          "plot": "The host, Samay Raina, invited Raftaar, Balraj Ghai, and Sahil Kale to the season finale because they were present and supportive during the show's early days when it was still just a rough concept",
-          "quality": "1080p",
-          "playback": {
-            "streamUrl": "https://vibestream.dpdns.org/series/latent/2/14/master.m3u8",
-            "format": "hls"
           }
         }
       ]
