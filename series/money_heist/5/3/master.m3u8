@@ -1,9 +1,9 @@
-shell-init: error retrieving current directory: getcwd: cannot access parent directories: No such file or directory
 #EXTM3U
-#EXT-X-VERSION:3
+#EXT-X-VERSION:6
 #EXT-X-TARGETDURATION:6
 #EXT-X-MEDIA-SEQUENCE:0
 #EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-INDEPENDENT-SEGMENTS
 #EXTINF:6.000000,
 https://huggingface.co/buckets/cineflix-ott/hls/resolve/series/tt6468322/5/3/segment_00000.ts
 #EXTINF:6.000000,
